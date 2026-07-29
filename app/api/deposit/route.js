@@ -11,7 +11,7 @@ export async function POST(request) {
     if (!clientId || !apiKey || !checksumKey) {
       console.error('LỖI: Thiếu biến môi trường PAYOS trên Vercel!');
       return NextResponse.json(
-        { error: 'Chưa cấu hình đủ Environment Variables (PAYOS_CLIENT_ID, PAYOS_API_KEY, PAYOS_CHECKSUM_KEY) trên Vercel!' },
+        { error: 'Chưa cấu hình đủ Environment Variables trên Vercel!' },
         { status: 500 }
       );
     }
@@ -32,20 +32,20 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Thiếu thông tin tài khoản người dùng' }, { status: 400 });
     }
 
-    // 4. Tự động lấy Domain hiện tại (tránh lỗi lệch domain giữa thueotp2, thueotp5...)
+    // 4. Tự động lấy Domain hiện tại
     const host = request.headers.get('host') || 'thueotp5.vercel.app';
     const protocol = host.includes('localhost') ? 'http' : 'https';
     const origin = `${protocol}://${host}`;
 
-    // 5. Làm sạch và tạo nội dung chuyển khoản (Tối đa 25 ký tự, không dấu, không ký tự đặc biệt)
+    // 5. Làm sạch và tạo nội dung chuyển khoản (ĐÃ FIX LỖI REGEX)
     const rawIdentifier = userEmail ? userEmail.split('@')[0] : userId;
-    const cleanIdentifier = rawIdentifier.replace(/[^a-zA- Viet0-9]/g, '').substring(0, 10).toUpperCase();
+    const cleanIdentifier = rawIdentifier.replace(/[^a-zA-Z0-9]/g, '').substring(0, 10).toUpperCase();
     const description = `NAP ${cleanIdentifier}`.substring(0, 25);
 
-    // Tạo orderCode ngẫu nhiên dạng số nguyên (integer) unique theo thời gian
+    // Tạo orderCode ngẫu nhiên dạng số nguyên unique
     const orderCode = Number(String(Date.now()).slice(-6) + Math.floor(100 + Math.random() * 900));
 
-    // 6. Cấu hình dữ liệu thanh toán gửi sang payOS
+    // 6. Cấu hình dữ liệu thanh toán
     const paymentData = {
       orderCode: orderCode,
       amount: Number(amount),
