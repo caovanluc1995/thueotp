@@ -1,5 +1,6 @@
-import LoginPage from './login/page';
+import { redirect } from 'next/navigation';
 
 export default function Home() {
-  return <LoginPage />;
+  // Tự động chuyển thẳng người dùng từ trang chủ sang trang /login
+  redirect('/login');
 }
