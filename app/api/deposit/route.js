@@ -1,35 +1,60 @@
 import { NextResponse } from 'next/server';
-import { PayOS } from '@payos/node'; // <--- ĐÃ SỬA THÀNH NAMED IMPORT
-
-const payos = new PayOS(
-  process.env.PAYOS_CLIENT_ID,
-  process.env.PAYOS_API_KEY,
-  process.env.PAYOS_CHECKSUM_KEY
-);
+import { PayOS } from '@payos/node';
 
 export async function POST(request) {
   try {
-    const { amount, userId, userEmail } = await request.json();
+    // 1. Kiểm tra các biến môi trường từ Vercel
+    const clientId = process.env.PAYOS_CLIENT_ID;
+    const apiKey = process.env.PAYOS_API_KEY;
+    const checksumKey = process.env.PAYOS_CHECKSUM_KEY;
 
-    if (!amount || amount < 10000) {
+    if (!clientId || !apiKey || !checksumKey) {
+      console.error('LỖI: Thiếu biến môi trường PAYOS trên Vercel!');
+      return NextResponse.json(
+        { error: 'Chưa cấu hình đủ Environment Variables (PAYOS_CLIENT_ID, PAYOS_API_KEY, PAYOS_CHECKSUM_KEY) trên Vercel!' },
+        { status: 500 }
+      );
+    }
+
+    // 2. Khởi tạo SDK payOS
+    const payos = new PayOS(clientId, apiKey, checksumKey);
+
+    // 3. Lấy dữ liệu từ Frontend
+    const body = await request.json();
+    const { amount, userId, userEmail } = body;
+
+    // Validate dữ liệu đầu vào
+    if (!amount || Number(amount) < 10000) {
       return NextResponse.json({ error: 'Số tiền nạp tối thiểu là 10.000đ' }, { status: 400 });
     }
 
     if (!userId) {
-      return NextResponse.json({ error: 'Thiếu thông tin tài khoản' }, { status: 400 });
+      return NextResponse.json({ error: 'Thiếu thông tin tài khoản người dùng' }, { status: 400 });
     }
 
-    const userIdentifier = userEmail ? userEmail.split('@')[0].toUpperCase() : userId.substring(0, 6).toUpperCase();
-    const orderCode = Math.floor(100000 + Math.random() * 900000);
+    // 4. Tự động lấy Domain hiện tại (tránh lỗi lệch domain giữa thueotp2, thueotp5...)
+    const host = request.headers.get('host') || 'thueotp5.vercel.app';
+    const protocol = host.includes('localhost') ? 'http' : 'https';
+    const origin = `${protocol}://${host}`;
 
+    // 5. Làm sạch và tạo nội dung chuyển khoản (Tối đa 25 ký tự, không dấu, không ký tự đặc biệt)
+    const rawIdentifier = userEmail ? userEmail.split('@')[0] : userId;
+    const cleanIdentifier = rawIdentifier.replace(/[^a-zA- Viet0-9]/g, '').substring(0, 10).toUpperCase();
+    const description = `NAP ${cleanIdentifier}`.substring(0, 25);
+
+    // Tạo orderCode ngẫu nhiên dạng số nguyên (integer) unique theo thời gian
+    const orderCode = Number(String(Date.now()).slice(-6) + Math.floor(100 + Math.random() * 900));
+
+    // 6. Cấu hình dữ liệu thanh toán gửi sang payOS
     const paymentData = {
       orderCode: orderCode,
       amount: Number(amount),
-      description: `NAP ${userIdentifier}`,
-      cancelUrl: 'https://thueotp2.vercel.app',
-      returnUrl: 'https://thueotp2.vercel.app',
+      description: description,
+      cancelUrl: `${origin}/dashboard`,
+      returnUrl: `${origin}/dashboard`,
     };
 
+    // 7. Gọi payOS tạo link thanh toán
     const paymentLinkRes = await payos.createPaymentLink(paymentData);
 
     return NextResponse.json({
@@ -37,8 +62,12 @@ export async function POST(request) {
       checkoutUrl: paymentLinkRes.checkoutUrl,
       qrCode: paymentLinkRes.qrCode,
     });
+
   } catch (error) {
-    console.error('Lỗi tạo thanh toán payOS:', error);
-    return NextResponse.json({ error: 'Không thể tạo mã thanh toán, vui lòng thử lại!' }, { status: 500 });
+    console.error('Lỗi API deposit:', error);
+    return NextResponse.json(
+      { error: error?.message || 'Không thể tạo mã thanh toán, vui lòng kiểm tra lại cấu hình payOS!' },
+      { status: 500 }
+    );
   }
 }
