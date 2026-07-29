@@ -16,7 +16,7 @@ import {
   AlertCircle,
   ShieldCheck,
   ArrowRight,
-  CheckCircle2,
+  ExternalLink,
 } from "lucide-react";
 
 const SHOPEE_SERVICES = [
@@ -69,12 +69,6 @@ const CARRIER_OPTIONS = {
   ],
 };
 
-const BANK_CONFIG = {
-  BANK_ID: "BIDV",
-  ACCOUNT_NO: "8811605753",
-  ACCOUNT_NAME: "CAO VAN LUC",
-};
-
 export default function Dashboard() {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -84,12 +78,15 @@ export default function Dashboard() {
 
   const [activeOrder, setActiveOrder] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [depositLoading, setDepositLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("rent");
   const [errorMsg, setErrorMsg] = useState(null);
 
   const [depositAmount, setDepositAmount] = useState(20000);
   const [depositError, setDepositError] = useState(null);
-  const [showQR, setShowQR] = useState(false);
+  
+  // Thông tin thanh toán payOS
+  const [payosData, setPayosData] = useState(null);
   const [transactions, setTransactions] = useState([]);
 
   const router = useRouter();
@@ -111,7 +108,7 @@ export default function Dashboard() {
   const handleDepositChange = (val) => {
     const num = Math.max(0, Number(val));
     setDepositAmount(num);
-    setShowQR(false);
+    setPayosData(null); // Reset mã QR cũ khi đổi số tiền
 
     if (num < 10000) {
       setDepositError("Số tiền nạp tối thiểu là 10.000 VNĐ");
@@ -120,15 +117,40 @@ export default function Dashboard() {
     }
   };
 
-  const handleGenerateQR = () => {
+  // NẠP TIỀN QUA API PAYOS
+  const handleGenerateQR = async () => {
     const num = Number(depositAmount);
     if (num < 10000) {
       setDepositError("Số tiền nạp tối thiểu là 10.000 VNĐ");
-      setShowQR(false);
+      setPayosData(null);
       return;
     }
+    
     setDepositError(null);
-    setShowQR(true);
+    setDepositLoading(true);
+
+    try {
+      const res = await fetch("/api/deposit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount: num,
+          userId: user.id,
+          userEmail: user.email,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.ok) {
+        setPayosData(data);
+      } else {
+        setDepositError(data.error || "Không thể tạo mã thanh toán, thử lại sau!");
+      }
+    } catch (err) {
+      setDepositError("Lỗi kết nối máy chủ tạo hóa đơn thanh toán!");
+    }
+    setDepositLoading(false);
   };
 
   useEffect(() => {
@@ -144,14 +166,14 @@ export default function Dashboard() {
     fetchUser();
   }, [router]);
 
-  // Polling tự động làm mới số dư mỗi 5 giây nếu người dùng mở TAB nạp tiền
+  // Polling làm mới số dư & lịch sử liên tục mỗi 3 giây ở tab Nạp tiền
   useEffect(() => {
     if (!user || activeTab !== "deposit") return;
 
     const timer = setInterval(() => {
       fetchProfile(user.id);
       fetchHistory(user.id);
-    }, 5000);
+    }, 3000);
 
     return () => clearInterval(timer);
   }, [user, activeTab]);
@@ -290,9 +312,6 @@ export default function Dashboard() {
     );
   }
 
-  const transferMemo = `NAP ${user?.email ? user.email.split("@")[0].toUpperCase() : user?.id?.substring(0, 6).toUpperCase()}`;
-  const validDepositAmount = Number(depositAmount) >= 10000 ? depositAmount : 0;
-  const qrUrl = `https://img.vietqr.io/image/${BANK_CONFIG.BANK_ID}-${BANK_CONFIG.ACCOUNT_NO}-compact2.png?amount=${validDepositAmount}&addInfo=${encodeURIComponent(transferMemo)}&accountName=${encodeURIComponent(BANK_CONFIG.ACCOUNT_NAME)}`;
   const currentCarriers = getAvailableCarriers();
 
   return (
@@ -350,7 +369,7 @@ export default function Dashboard() {
                 : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
             }`}
           >
-            <Wallet className="w-4 h-4" /> Nạp Tiền (VietQR)
+            <Wallet className="w-4 h-4" /> Nạp Tiền (payOS Tự Động)
           </button>
           <button
             onClick={() => setActiveTab("history")}
@@ -510,7 +529,7 @@ export default function Dashboard() {
         {activeTab === "deposit" && (
           <div className="bg-slate-900/80 backdrop-blur-xl border border-slate-800 p-6 rounded-2xl shadow-xl space-y-6">
             <h2 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-              <QrCode className="w-5 h-5 text-emerald-400" /> Nạp Tiền VietQR Tự Động 24/7
+              <QrCode className="w-5 h-5 text-emerald-400" /> Nạp Tiền payOS Tự Động 24/7
             </h2>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch">
@@ -575,14 +594,24 @@ export default function Dashboard() {
 
                   <button
                     onClick={handleGenerateQR}
-                    className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-emerald-600/20 transition flex items-center justify-center gap-2 text-sm"
+                    disabled={depositLoading}
+                    className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-emerald-600/20 transition flex items-center justify-center gap-2 text-sm disabled:opacity-50"
                   >
-                    <QrCode className="w-5 h-5" />
-                    <span>
-                      Tạo mã QR nạp tiền (
-                      {Number(depositAmount || 0).toLocaleString()}đ)
-                    </span>
-                    <ArrowRight className="w-4 h-4" />
+                    {depositLoading ? (
+                      <>
+                        <RefreshCw className="w-5 h-5 animate-spin" />
+                        <span>Đang khởi tạo hoá đơn...</span>
+                      </>
+                    ) : (
+                      <>
+                        <QrCode className="w-5 h-5" />
+                        <span>
+                          Tạo mã QR nạp tiền (
+                          {Number(depositAmount || 0).toLocaleString()}đ)
+                        </span>
+                        <ArrowRight className="w-4 h-4" />
+                      </>
+                    )}
                   </button>
                 </div>
 
@@ -592,32 +621,35 @@ export default function Dashboard() {
                   </p>
                   <p>• Nhập số tiền và bấm "Tạo mã QR nạp tiền".</p>
                   <p>• Quét mã QR bằng App Ngân hàng bất kỳ.</p>
-                  <p>• **Giữ nguyên nội dung chuyển khoản** để tự động cộng tiền.</p>
-                  <p>• Tiền sẽ tự động cộng vào tài khoản trong 5-30 giây.</p>
+                  <p>• **Giữ nguyên nội dung chuyển khoản** do payOS tạo.</p>
+                  <p>• Hệ thống sẽ tự động cộng tiền trong 5-30 giây!</p>
                 </div>
               </div>
 
               <div className="flex flex-col items-center justify-center p-6 bg-slate-950 border border-slate-800 rounded-2xl text-center min-h-[320px]">
-                {showQR && !depositError ? (
+                {payosData && !depositError ? (
                   <div className="space-y-4 w-full flex flex-col items-center animate-fade-in">
                     <div className="p-3 bg-white rounded-xl shadow-lg relative">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
-                        src={qrUrl}
-                        alt="VietQR"
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(payosData.qrCode || payosData.checkoutUrl)}`}
+                        alt="payOS QR Code"
                         className="w-48 h-48 object-contain"
                       />
                     </div>
 
+                    <a
+                      href={payosData.checkoutUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-2 text-xs font-semibold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-3 py-1.5 rounded-lg hover:bg-emerald-900/50 transition"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" /> Thanh toán qua cổng payOS
+                    </a>
+
                     <div className="w-full space-y-2 text-sm">
                       <div className="flex justify-between items-center bg-slate-900 p-2.5 rounded-lg border border-slate-800">
-                        <span className="text-slate-400 text-xs">Nội dung CK:</span>
-                        <span className="font-mono font-bold text-emerald-400 select-all">
-                          {transferMemo}
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center bg-slate-900 p-2.5 rounded-lg border border-slate-800">
-                        <span className="text-slate-400 text-xs">Số tiền:</span>
+                        <span className="text-slate-400 text-xs">Số tiền nạp:</span>
                         <span className="font-mono font-bold text-slate-200">
                           {Number(depositAmount).toLocaleString()} VNĐ
                         </span>
@@ -625,7 +657,7 @@ export default function Dashboard() {
                     </div>
 
                     <p className="text-xs text-emerald-400 flex items-center gap-1 animate-pulse font-medium pt-1">
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Đang chờ ngân hàng xác nhận giao dịch...
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Đang đợi ngân hàng xác nhận giao dịch...
                     </p>
                   </div>
                 ) : (
@@ -635,7 +667,7 @@ export default function Dashboard() {
                     </div>
                     <p className="text-sm font-medium text-slate-400">Chưa tạo mã QR</p>
                     <p className="text-xs text-slate-500 max-w-[220px]">
-                      Vui lòng chọn hoặc nhập số tiền, sau đó bấm nút{" "}
+                      Vui lòng chọn số tiền và bấm nút{" "}
                       <span className="text-emerald-400 font-semibold">
                         "Tạo mã QR nạp tiền"
                       </span>
