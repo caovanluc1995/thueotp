@@ -84,7 +84,7 @@ export default function Dashboard() {
 
   const [depositAmount, setDepositAmount] = useState(20000);
   const [depositError, setDepositError] = useState(null);
-  
+
   // Thông tin thanh toán payOS
   const [payosData, setPayosData] = useState(null);
   const [transactions, setTransactions] = useState([]);
@@ -100,7 +100,10 @@ export default function Dashboard() {
 
   useEffect(() => {
     const carriers = getAvailableCarriers();
-    if (carriers.length > 0 && !carriers.some((c) => c.id === selectedCarrier)) {
+    if (
+      carriers.length > 0 &&
+      !carriers.some((c) => c.id === selectedCarrier)
+    ) {
       setSelectedCarrier(carriers[0].id);
     }
   }, [selectedService]);
@@ -117,7 +120,7 @@ export default function Dashboard() {
     }
   };
 
-  // NẠP TIỀN QUA API PAYOS
+  // NẠP TIỀN QUA API PAYOS (ĐÃ SỬA AN TOÀN)
   const handleGenerateQR = async () => {
     const num = Number(depositAmount);
     if (num < 10000) {
@@ -125,7 +128,18 @@ export default function Dashboard() {
       setPayosData(null);
       return;
     }
-    
+
+    // Lấy ID và Email an toàn từ profile hoặc user
+    const currentUserId = profile?.id || user?.id;
+    const currentUserEmail = profile?.email || user?.email;
+
+    if (!currentUserId) {
+      setDepositError(
+        "Đang tải thông tin tài khoản, vui lòng bấm thử lại sau 2 giây!",
+      );
+      return;
+    }
+
     setDepositError(null);
     setDepositLoading(true);
 
@@ -135,8 +149,8 @@ export default function Dashboard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           amount: num,
-          userId: user.id,
-          userEmail: user.email,
+          userId: currentUserId,
+          userEmail: currentUserEmail,
         }),
       });
 
@@ -145,7 +159,9 @@ export default function Dashboard() {
       if (res.ok && data.ok) {
         setPayosData(data);
       } else {
-        setDepositError(data.error || "Không thể tạo mã thanh toán, thử lại sau!");
+        setDepositError(
+          data.error || "Không thể tạo mã thanh toán, thử lại sau!",
+        );
       }
     } catch (err) {
       setDepositError("Lỗi kết nối máy chủ tạo hóa đơn thanh toán!");
@@ -240,7 +256,7 @@ export default function Dashboard() {
         fetchHistory(user.id);
       } else {
         setErrorMsg(
-          data.error || "Không thể lấy số lúc này, vui lòng thử lại sau!"
+          data.error || "Không thể lấy số lúc này, vui lòng thử lại sau!",
         );
       }
     } catch (err) {
@@ -334,7 +350,9 @@ export default function Dashboard() {
 
           <div className="flex items-center gap-4 w-full md:w-auto justify-between">
             <div className="bg-slate-950/60 border border-slate-800 px-4 py-2 rounded-xl text-right">
-              <span className="text-xs text-slate-400 block">Số dư hiện tại</span>
+              <span className="text-xs text-slate-400 block">
+                Số dư hiện tại
+              </span>
               <span className="text-lg font-bold text-emerald-400 font-mono">
                 {Number(profile.balance || 0).toLocaleString()} VNĐ
               </span>
@@ -516,7 +534,8 @@ export default function Dashboard() {
                       </span>
                     ) : (
                       <span className="text-sm text-amber-400 font-medium flex items-center gap-2 animate-pulse">
-                        <RefreshCw className="w-4 h-4 animate-spin" /> Đang chờ SMS gửi về...
+                        <RefreshCw className="w-4 h-4 animate-spin" /> Đang chờ
+                        SMS gửi về...
                       </span>
                     )}
                   </div>
@@ -529,7 +548,8 @@ export default function Dashboard() {
         {activeTab === "deposit" && (
           <div className="bg-slate-900/80 backdrop-blur-xl border border-slate-800 p-6 rounded-2xl shadow-xl space-y-6">
             <h2 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-              <QrCode className="w-5 h-5 text-emerald-400" /> Nạp Tiền payOS Tự Động 24/7
+              <QrCode className="w-5 h-5 text-emerald-400" /> Nạp Tiền payOS Tự
+              Động 24/7
             </h2>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch">
@@ -617,7 +637,8 @@ export default function Dashboard() {
 
                 <div className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-xl text-amber-300 text-xs space-y-1">
                   <p className="font-bold flex items-center gap-1">
-                    <ShieldAlert className="w-4 h-4" /> QUY ĐỊNH NẠP TIỀN TỰ ĐỘNG:
+                    <ShieldAlert className="w-4 h-4" /> QUY ĐỊNH NẠP TIỀN TỰ
+                    ĐỘNG:
                   </p>
                   <p>• Nhập số tiền và bấm "Tạo mã QR nạp tiền".</p>
                   <p>• Quét mã QR bằng App Ngân hàng bất kỳ.</p>
@@ -644,12 +665,15 @@ export default function Dashboard() {
                       rel="noreferrer"
                       className="inline-flex items-center gap-2 text-xs font-semibold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-3 py-1.5 rounded-lg hover:bg-emerald-900/50 transition"
                     >
-                      <ExternalLink className="w-3.5 h-3.5" /> Thanh toán qua cổng payOS
+                      <ExternalLink className="w-3.5 h-3.5" /> Thanh toán qua
+                      cổng payOS
                     </a>
 
                     <div className="w-full space-y-2 text-sm">
                       <div className="flex justify-between items-center bg-slate-900 p-2.5 rounded-lg border border-slate-800">
-                        <span className="text-slate-400 text-xs">Số tiền nạp:</span>
+                        <span className="text-slate-400 text-xs">
+                          Số tiền nạp:
+                        </span>
                         <span className="font-mono font-bold text-slate-200">
                           {Number(depositAmount).toLocaleString()} VNĐ
                         </span>
@@ -657,7 +681,8 @@ export default function Dashboard() {
                     </div>
 
                     <p className="text-xs text-emerald-400 flex items-center gap-1 animate-pulse font-medium pt-1">
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Đang đợi ngân hàng xác nhận giao dịch...
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Đang
+                      đợi ngân hàng xác nhận giao dịch...
                     </p>
                   </div>
                 ) : (
@@ -665,7 +690,9 @@ export default function Dashboard() {
                     <div className="w-16 h-16 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-400">
                       <QrCode className="w-8 h-8 opacity-40" />
                     </div>
-                    <p className="text-sm font-medium text-slate-400">Chưa tạo mã QR</p>
+                    <p className="text-sm font-medium text-slate-400">
+                      Chưa tạo mã QR
+                    </p>
                     <p className="text-xs text-slate-500 max-w-[220px]">
                       Vui lòng chọn số tiền và bấm nút{" "}
                       <span className="text-emerald-400 font-semibold">

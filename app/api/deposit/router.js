@@ -19,27 +19,27 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Thiếu thông tin tài khoản' }, { status: 400 });
     }
 
-    // Lấy prefix Email hoặc 6 ký tự ID để làm cú pháp NAP chuẩn với Webhook
+    // Lấy prefix Email hoặc 6 ký tự ID
     const userIdentifier = userEmail ? userEmail.split('@')[0].toUpperCase() : userId.substring(0, 6).toUpperCase();
 
-    // Tạo orderCode ngẫu nhiên (chỉ gồm số)
-    const orderCode = Number(String(Date.now()).slice(-6));
+    // Tạo orderCode ngẫu nhiên dạng số integer (An toàn tuyệt đối với payOS)
+    const orderCode = Math.floor(100000 + Math.random() * 900000);
 
     // Cấu hình đơn hàng payOS
     const paymentData = {
       orderCode: orderCode,
       amount: Number(amount),
-      description: `NAP ${userIdentifier}`, // Cú pháp chuẩn để Webhook đọc được!
-      cancelUrl: 'https://thueotp1.vercel.app/dashboard',
-      returnUrl: 'https://thueotp1.vercel.app/dashboard',
+      description: `NAP ${userIdentifier}`,
+      cancelUrl: 'https://thueotp1.vercel.app',
+      returnUrl: 'https://thueotp1.vercel.app',
     };
 
     const paymentLinkRes = await payos.createPaymentLink(paymentData);
 
     return NextResponse.json({
       ok: true,
-      checkoutUrl: paymentLinkRes.checkoutUrl, // Link thanh toán
-      qrCode: paymentLinkRes.qrCode,           // Chuỗi mã QR thanh toán chuẩn của payOS
+      checkoutUrl: paymentLinkRes.checkoutUrl,
+      qrCode: paymentLinkRes.qrCode,
     });
   } catch (error) {
     console.error('Lỗi tạo thanh toán payOS:', error);
