@@ -1,28 +1,32 @@
 import { NextResponse } from 'next/server';
-import { PayOS } from '@payos/node';
+import crypto from 'crypto';
+
+// Hàm tự tính signature chuẩn REST API của PayOS
+function createPaymentSignature(data, checksumKey) {
+  const sortedDataKeys = Object.keys(data).sort();
+  const dataQueryStr = sortedDataKeys
+    .map((key) => `${key}=${data[key]}`)
+    .join('&');
+
+  return crypto
+    .createHmac('sha256', checksumKey)
+    .update(dataQueryStr)
+    .digest('hex');
+}
 
 export async function POST(request) {
   try {
-    // 1. Lấy biến môi trường
     const clientId = process.env.PAYOS_CLIENT_ID;
     const apiKey = process.env.PAYOS_API_KEY;
     const checksumKey = process.env.PAYOS_CHECKSUM_KEY;
 
     if (!clientId || !apiKey || !checksumKey) {
       return NextResponse.json(
-        { error: 'Thiếu cấu hình PAYOS (CLIENT_ID, API_KEY, CHECKSUM_KEY) trên Vercel!' },
+        { error: 'Thiếu cấu hình PAYOS trên Vercel!' },
         { status: 500 }
       );
     }
 
-    // 2. Khởi tạo SDK payOS chuẩn (Dạng Object)
-    const payos = new PayOS({
-      clientId: clientId,
-      apiKey: apiKey,
-      checksumKey: checksumKey,
-    });
-
-    // 3. Lấy dữ liệu từ client
     const body = await request.json();
     const { amount, userId, userEmail } = body;
 
@@ -31,44 +35,67 @@ export async function POST(request) {
     }
 
     if (!userId) {
-      return NextResponse.json({ error: 'Thiếu thông tin tài khoản người dùng' }, { status: 400 });
+      return NextResponse.json({ error: 'Thiếu thông tin tài khoản' }, { status: 400 });
     }
 
-    // 4. Lấy domain động
+    // Domain động
     const host = request.headers.get('host') || 'thueotp7.vercel.app';
     const protocol = host.includes('localhost') ? 'http' : 'https';
     const origin = `${protocol}://${host}`;
 
-    // 5. Chuẩn hóa chuỗi mô tả (Dưới 25 ký tự, không chứa ký tự đặc biệt)
+    // Chuẩn hóa mô tả & orderCode
     const rawIdentifier = userEmail ? userEmail.split('@')[0] : userId;
-    const cleanIdentifier = rawIdentifier.replace(/[^a-zA-Z0-9]/g, '').substring(0, 10).toUpperCase();
+    const cleanIdentifier = String(rawIdentifier).replace(/[^a-zA-Z0-9]/g, '').substring(0, 10).toUpperCase();
     const description = `NAP ${cleanIdentifier}`.substring(0, 25);
-
-    // Tạo mã đơn hàng dạng số
     const orderCode = Number(String(Date.now()).slice(-6) + Math.floor(100 + Math.random() * 900));
 
-    // 6. Tạo dữ liệu thanh toán
+    // 1. Chuẩn bị dữ liệu gửi PayOS
     const paymentData = {
-      orderCode: orderCode,
       amount: Number(amount),
-      description: description,
       cancelUrl: `${origin}/dashboard`,
+      description: description,
+      orderCode: orderCode,
       returnUrl: `${origin}/dashboard`,
     };
 
-    // 7. Gọi API payOS tạo link / QR
-    const paymentLinkRes = await payos.createPaymentLink(paymentData);
+    // 2. Tự tính toán Signature SHA256
+    const signature = createPaymentSignature(paymentData, checksumKey);
 
+    // 3. Gọi trực tiếp API REST của PayOS qua fetch (Bỏ qua SDK @payos/node hoàn toàn)
+    const payosResponse = await fetch('https://api-merchant.payos.vn/v2/payment-requests', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-client-id': clientId,
+        'x-api-key': apiKey,
+      },
+      body: JSON.stringify({
+        ...paymentData,
+        signature: signature,
+      }),
+    });
+
+    const resData = await payosResponse.json();
+
+    if (resData.code !== '00') {
+      console.error('Lỗi từ PayOS API:', resData);
+      return NextResponse.json(
+        { error: resData.desc || 'Không thể tạo mã thanh toán từ PayOS!' },
+        { status: 400 }
+      );
+    }
+
+    // 4. Trả kết quả cho Frontend
     return NextResponse.json({
       ok: true,
-      checkoutUrl: paymentLinkRes.checkoutUrl,
-      qrCode: paymentLinkRes.qrCode,
+      checkoutUrl: resData.data.checkoutUrl,
+      qrCode: resData.data.qrCode,
     });
 
   } catch (error) {
-    console.error('Lỗi khi tạo payment link payOS:', error);
+    console.error('Lỗi Server:', error);
     return NextResponse.json(
-      { error: error?.message || 'Không thể tạo mã thanh toán, vui lòng thử lại!' },
+      { error: error?.message || 'Lỗi kết nối máy chủ!' },
       { status: 500 }
     );
   }
