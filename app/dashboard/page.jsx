@@ -196,7 +196,7 @@ export default function Dashboard() {
     }, 3000);
 
     return () => clearInterval(timer);
-  }, [user, activeTab]);
+  }, [user, activeTab, payosData]);
 
   const fetchProfile = async (userId) => {
     const { data } = await supabase
