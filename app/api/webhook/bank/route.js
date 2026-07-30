@@ -28,9 +28,6 @@ export async function POST(request) {
   try {
     const body = await request.json();
 
-    // 1. Kiểm tra chữ ký bảo mật Webhook từ PayOS
-    // FAIL-CLOSED: nếu thiếu checksumKey trên server thì từ chối luôn,
-    // KHÔNG được âm thầm bỏ qua bước xác minh chữ ký như bản cũ.
     const checksumKey = process.env.PAYOS_CHECKSUM_KEY;
     if (!checksumKey) {
       console.error('CẤU HÌNH THIẾU: PAYOS_CHECKSUM_KEY chưa được set trên server!');
@@ -54,16 +51,21 @@ export async function POST(request) {
 
     if (amount <= 0) return NextResponse.json({ success: true });
 
-    // Trích xuất mã NAP (Ví dụ: NAP 8A1B2C3D)
     const match = memo.match(/NAP\s+([A-Z0-9]+)/);
     if (!match) {
       console.log('Nội dung chuyển khoản không khớp cú pháp NAP:', memo);
+      // Vẫn ghi lại để không mất dấu vết, admin có thể đối chiếu tay
+      await supabaseAdmin.from('unmatched_deposits').insert([{
+        reference_id: transactionId,
+        amount,
+        memo,
+        raw_payload: body,
+      }]).select().maybeSingle();
       return NextResponse.json({ success: true, message: "Không đúng cú pháp NAP" });
     }
 
     const userCode = match[1].trim();
 
-    // 2. Tìm User tương ứng trong Supabase
     const { data: profiles, error: profileErr } = await supabaseAdmin
       .from('profiles')
       .select('id, balance');
@@ -80,12 +82,19 @@ export async function POST(request) {
 
     if (!targetUser) {
       console.error(`Không tìm thấy user với mã: ${userCode}`);
-      return NextResponse.json({ success: true, message: "User không tồn tại" });
+      // QUAN TRỌNG: không được im lặng bỏ qua — ghi lại để admin đối chiếu và cộng tay,
+      // vì trả success:true khiến PayOS coi là đã xử lý xong và KHÔNG gửi lại webhook nữa.
+      const { error: logErr } = await supabaseAdmin.from('unmatched_deposits').insert([{
+        reference_id: transactionId,
+        amount,
+        memo,
+        raw_payload: body,
+      }]);
+      if (logErr) console.error('Lỗi khi ghi log unmatched_deposits:', logErr);
+
+      return NextResponse.json({ success: true, message: "User không tồn tại - đã lưu để đối chiếu" });
     }
 
-    // 3. Ghi log giao dịch TRƯỚC, dựa vào unique constraint của DB trên reference_id
-    // để chống trùng (an toàn hơn select-rồi-insert vì không có khoảng hở giữa 2 bước).
-    // -> Nhớ chạy migration.sql để tạo unique index cho transactions.reference_id trước.
     const { error: insertErr } = await supabaseAdmin.from('transactions').insert([{
       user_id: targetUser.id,
       amount: amount,
@@ -95,7 +104,6 @@ export async function POST(request) {
     }]);
 
     if (insertErr) {
-      // Vi phạm unique constraint => giao dịch này đã được xử lý trước đó, bỏ qua an toàn
       if (insertErr.code === '23505') {
         return NextResponse.json({ success: true, message: "Giao dịch đã được xử lý từ trước" });
       }
@@ -103,7 +111,6 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Failed to log transaction' }, { status: 500 });
     }
 
-    // 4. Cộng tiền NGUYÊN TỬ qua RPC (tránh lost-update khi có webhook trùng thời điểm)
     const { error: updateErr } = await supabaseAdmin.rpc('increment_balance', {
       p_user_id: targetUser.id,
       p_amount: amount,
@@ -111,7 +118,6 @@ export async function POST(request) {
 
     if (updateErr) {
       console.error('Lỗi khi cập nhật số dư:', updateErr);
-      // Giao dịch đã được ghi log nhưng cộng tiền lỗi — cần xử lý thủ công / có cảnh báo riêng
       return NextResponse.json({ error: 'Failed to update balance' }, { status: 500 });
     }
 
