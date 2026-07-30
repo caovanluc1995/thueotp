@@ -34,7 +34,6 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
     }
 
-    // 1. Xác thực chữ ký Webhook
     const isValid = verifyPayOSSignature(body, checksumKey);
     if (!isValid) {
       console.error('CẢNH BÁO: Request Webhook không hợp lệ!');
@@ -52,7 +51,7 @@ export async function POST(request) {
 
     if (amount <= 0) return NextResponse.json({ success: true });
 
-    // 2. Bắt cú pháp NAP
+    // 1. Kiểm tra cú pháp NAP <MA_USER>
     const match = memo.match(/NAP\s+([A-Z0-9]+)/);
     if (!match) {
       console.log('Nội dung chuyển khoản không khớp cú pháp NAP:', memo);
@@ -61,23 +60,23 @@ export async function POST(request) {
         amount,
         memo,
         raw_payload: body,
-      }]).select().maybeSingle();
+      }]);
       return NextResponse.json({ success: true, message: "Không đúng cú pháp NAP" });
     }
 
     const userCode = match[1].trim();
 
-    // 3. Tìm chính xác User thông qua DB Query trực tiếp (Tránh kéo全 bộ profiles về RAM)
-    // Giả định User ID dạng UUID, kiểm tra chính xác 8 ký tự đầu trực tiếp trong Postgres SQL
-    const { data: matchedUsers, error: profileErr } = await supabaseAdmin
-      .from('profiles')
-      .select('id')
-      .ilike('id', `${userCode}%`)
-      .limit(1);
+    // 2. Tìm User bằng hàm RPC get_user_by_short_id (Nhanh và không tải toàn bộ DB)
+    const { data: targetUserList, error: findErr } = await supabaseAdmin
+      .rpc('get_user_by_short_id', { p_short_id: userCode });
 
-    const targetUser = matchedUsers && matchedUsers.length > 0 ? matchedUsers[0] : null;
+    if (findErr) {
+      console.error('Lỗi khi gọi RPC get_user_by_short_id:', findErr);
+      return NextResponse.json({ error: 'Database Error' }, { status: 500 });
+    }
 
-    if (!targetUser) {
+    // Nếu không tìm thấy User tương ứng với mã
+    if (!targetUserList || targetUserList.length === 0) {
       console.error(`Không tìm thấy user với mã: ${userCode}`);
       await supabaseAdmin.from('unmatched_deposits').insert([{
         reference_id: transactionId,
@@ -88,32 +87,24 @@ export async function POST(request) {
       return NextResponse.json({ success: true, message: "User không tồn tại - đã lưu để đối chiếu" });
     }
 
-    // 4. Ghi log giao dịch - Bắt buộc dùng Unique Key reference_id để chống nạp trùng
-    const { error: insertErr } = await supabaseAdmin.from('transactions').insert([{
-      user_id: targetUser.id,
-      amount: amount,
-      type: 'DEPOSIT',
-      reference_id: transactionId,
-      description: `Nạp tiền tự động payOS (+${amount.toLocaleString()}đ)`
-    }]);
+    const targetUser = targetUserList[0];
 
-    if (insertErr) {
-      if (insertErr.code === '23505') { // Postgres code 23505: Unique constraint violation
-        return NextResponse.json({ success: true, message: "Giao dịch đã được xử lý từ trước" });
-      }
-      console.error('Lỗi khi ghi log giao dịch:', insertErr);
-      return NextResponse.json({ error: 'Failed to log transaction' }, { status: 500 });
-    }
-
-    // 5. Cộng số dư tài khoản
-    const { error: updateErr } = await supabaseAdmin.rpc('increment_balance', {
+    // 3. Xử lý nạp tiền Atomic bằng hàm RPC process_payos_deposit (Chống nạp trùng / Race Condition)
+    const { data: processResult, error: processErr } = await supabaseAdmin.rpc('process_payos_deposit', {
       p_user_id: targetUser.id,
       p_amount: amount,
+      p_reference_id: transactionId,
+      p_description: `Nạp tiền tự động payOS (+${amount.toLocaleString()}đ)`
     });
 
-    if (updateErr) {
-      console.error('Lỗi khi cập nhật số dư:', updateErr);
-      return NextResponse.json({ error: 'Failed to update balance' }, { status: 500 });
+    if (processErr) {
+      console.error('Lỗi khi gọi RPC process_payos_deposit:', processErr);
+      return NextResponse.json({ error: 'Failed to process deposit' }, { status: 500 });
+    }
+
+    // Nếu giao dịch này đã từng xử lý trước đó
+    if (processResult?.already_processed) {
+      return NextResponse.json({ success: true, message: "Giao dịch đã được xử lý từ trước" });
     }
 
     console.log(`Đã cộng thành công ${amount}đ cho user: ${targetUser.id}`);

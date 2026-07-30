@@ -37,19 +37,19 @@ const SHOPEE_SERVICES = [
     id: "shopee_v2",
     name: "Phiên bản sim V2",
     price: 5500,
-    desc: "Có check trạng thái số đăng kí",
+    desc: "Có check trạng thái số",
   },
   {
     id: "shopee_v3",
     name: "Phiên bản sim V3",
     price: 5000,
-    desc: "Có check trạng thái số đăng kí",
+    desc: "Có check trạng thái số",
   },
   {
     id: "shopee_v4",
     name: "Phiên bản sim V4",
     price: 5000,
-    desc: "Có check trạng thái số đăng kí",
+    desc: "Có check trạng thái số",
   },
 ];
 
@@ -163,29 +163,30 @@ export default function Dashboard() {
       return;
     }
 
+    const currentUserId = profile?.id || user?.id;
+    const currentUserEmail = profile?.email || user?.email;
+
+    if (!currentUserId) {
+      setDepositError(
+        "Đang tải thông tin tài khoản, vui lòng bấm thử lại sau 2 giây!",
+      );
+      return;
+    }
+
     setDepositError(null);
     setDepositSuccessMsg(false);
     setDepositLoading(true);
 
     try {
-      // Lấy Token xác thực
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-
-      if (!token) {
-        setDepositLoading(false);
-        setDepositError("Phiên đăng nhập hết hạn, vui lòng đăng nhập lại!");
-        return;
-      }
-
       const res = await fetch("/api/deposit", {
         method: "POST",
-        headers: { 
+        headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}` 
         },
         body: JSON.stringify({
           amount: num,
+          userId: currentUserId,
+          userEmail: currentUserEmail,
         }),
       });
 
@@ -323,28 +324,15 @@ export default function Dashboard() {
 
     setLoading(true);
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const token = session?.access_token;
-
-      // Kiểm tra nếu session hết hạn hoặc không tồn tại token
-      if (!token) {
-        setLoading(false);
-        return setErrorMsg(
-          "Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại!",
-        );
-      }
-
+      const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch("/api/rent-number", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          Authorization: "Bearer ${session?.access_token}",
         },
         body: JSON.stringify({
           action: "START",
-          userId: user.id,
           serviceCode: selectedService.id,
           carrier: selectedCarrier,
         }),
@@ -388,20 +376,9 @@ export default function Dashboard() {
 
     const interval = setInterval(async () => {
       try {
-        // ĐÃ SỬA: Lấy token từ Supabase session để không bị undefined
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        const token = session?.access_token;
-
-        if (!token) return;
-
         const res = await fetch("/api/rent-number", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             action: "GET_OTP",
             userId: user.id,
@@ -477,14 +454,14 @@ export default function Dashboard() {
     <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-purple-950 to-slate-900 text-slate-100 p-4 md:p-8 flex flex-col justify-between">
       <div className="max-w-5xl mx-auto space-y-6 w-full">
         {/* HEADER VỚI USER MENU MỚI */}
-        <header className=" relative z-40 bg-slate-900/80 backdrop-blur-xl border border-slate-800 p-4 sm:p-5 rounded-2xl flex flex-col md:flex-row justify-between items-center gap-4 shadow-xl">
+        <header className="relative z-40 bg-slate-900/80 backdrop-blur-xl border border-slate-800 p-4 sm:p-5 rounded-2xl flex flex-col md:flex-row justify-between items-center gap-4 shadow-xl">
           <div className="flex items-center gap-3 w-full md:w-auto">
             <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-orange-500 to-amber-500 flex items-center justify-center shadow-lg shadow-orange-500/20 shrink-0">
               <Phone className="w-6 h-6 text-white" />
             </div>
             <div>
               <h1 className="text-xl font-black bg-gradient-to-r from-orange-400 via-amber-300 to-yellow-400 bg-clip-text text-transparent">
-                THUÊ OTP 247
+                THUÊ OTP SHOPEE 247
               </h1>
               <p className="text-xs text-slate-400 flex items-center gap-1">
                 Hệ thống nhận OTP tự động 24/7
@@ -592,7 +569,7 @@ export default function Dashboard() {
                 : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
             }`}
           >
-            <Wallet className="w-4 h-4" /> Nạp Tiền
+            <Wallet className="w-4 h-4" /> Nạp Tiền (payOS Tự Động)
           </button>
           <button
             onClick={() => setActiveTab("history")}
@@ -850,11 +827,12 @@ export default function Dashboard() {
 
                 <div className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-xl text-amber-300 text-xs space-y-1">
                   <p className="font-bold flex items-center gap-1">
-                    <ShieldAlert className="w-4 h-4" /> QUY ĐỊNH NẠP TIỀN:
+                    <ShieldAlert className="w-4 h-4" /> QUY ĐỊNH NẠP TIỀN TỰ
+                    ĐỘNG:
                   </p>
                   <p>• Nhập số tiền và bấm "Tạo mã QR nạp tiền".</p>
                   <p>• Quét mã QR bằng App Ngân hàng bất kỳ.</p>
-                  <p>• Lưu ý: Giữ nguyên nội dung chuyển khoản.</p>
+                  <p>• **Giữ nguyên nội dung chuyển khoản** do payOS tạo.</p>
                   <p>• Hệ thống sẽ tự động cộng tiền trong 5-30 giây!</p>
                 </div>
               </div>
@@ -1089,7 +1067,7 @@ export default function Dashboard() {
             </div>
             <div>
               <h3 className="font-bold text-slate-800 dark:text-slate-100 text-base">
-                Bạn cần hỗ trợ thêm?
+                Cần hỗ trợ thêm?
               </h3>
               <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
                 Đội ngũ hỗ trợ sẵn sàng giúp đỡ bạn 24/7!

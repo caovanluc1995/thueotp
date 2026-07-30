@@ -1,16 +1,10 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
 
 function createPaymentSignature(data, checksumKey) {
   const sortedDataKeys = Object.keys(data).sort();
   const dataQueryStr = sortedDataKeys
-    .map((key) => `${key}=${data[key] === null || data[key] === undefined ? '' : data[key]}`)
+    .map((key) => `${key}=${data[key]}`)
     .join('&');
 
   return crypto
@@ -32,35 +26,27 @@ export async function POST(request) {
       );
     }
 
-    // Bắt buộc kiểm tra Authorization Header
-    const authHeader = request.headers.get('authorization') || '';
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-
-    if (!token) {
-      return NextResponse.json({ error: 'Vui lòng đăng nhập' }, { status: 401 });
-    }
-
-    const { data: userData, error: authErr } = await supabaseAdmin.auth.getUser(token);
-    if (authErr || !userData?.user) {
-      return NextResponse.json({ error: 'Phiên đăng nhập không hợp lệ' }, { status: 401 });
-    }
-
-    const userId = userData.user.id;
     const body = await request.json();
-    const { amount } = body;
+    const { amount, userId, userEmail } = body;
 
-    if (!amount || Number(amount) < 10000 || Number(amount) > 100000000) {
-      return NextResponse.json({ error: 'Số tiền nạp không hợp lệ (Từ 10.000đ đến 100.000.000đ)' }, { status: 400 });
+    if (!amount || Number(amount) < 10000) {
+      return NextResponse.json({ error: 'Số tiền nạp tối thiểu là 10.000đ' }, { status: 400 });
+    }
+
+    if (!userId) {
+      return NextResponse.json({ error: 'Thiếu thông tin tài khoản' }, { status: 400 });
     }
 
     const host = request.headers.get('host') || 'thueotp7.vercel.app';
     const protocol = host.includes('localhost') ? 'http' : 'https';
     const origin = `${protocol}://${host}`;
 
+    // Lấy 8 ký tự đầu của User ID (viết hoa, xóa ký tự đặc biệt) làm mã nạp cố định
     const cleanUserId = String(userId).replace(/[^a-zA-Z0-9]/g, '').substring(0, 8).toUpperCase();
-    const description = `NAP ${cleanUserId}`;
     
-    const orderCode = Number(Math.floor(Date.now() / 1000) + Math.floor(Math.random() * 899 + 100));
+    // Nội dung chuyển khoản chuẩn: NAP <8_KY_TU_USER_ID>
+    const description = `NAP ${cleanUserId}`;
+    const orderCode = Number(String(Date.now()).slice(-6) + Math.floor(100 + Math.random() * 900));
 
     const paymentData = {
       amount: Number(amount),
