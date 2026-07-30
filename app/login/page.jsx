@@ -4,18 +4,13 @@ import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import { Mail, Lock, ArrowRight, Phone, ShieldCheck, Loader2 } from 'lucide-react';
 
-// Hàm dịch mã lỗi tiếng Anh của Supabase sang Tiếng Việt
 const translateError = (message) => {
   if (!message) return '';
-
   const msg = message.toLowerCase();
 
-  // Lỗi định dạng và độ dài mật khẩu
   if (msg.includes('password should be at least') || msg.includes('character')) {
-    return 'Mật khẩu phải có ít nhất 8 ký tự, bao gồm chữ cái và chữ số.';
+    return 'Mật khẩu phải có từ 8 - 64 ký tự, bao gồm cả chữ cái và chữ số.';
   }
-
-  // Lỗi liên quan đến email và đăng nhập
   if (msg.includes('user already registered') || msg.includes('already exists')) {
     return 'Email này đã được đăng ký. Vui lòng chuyển sang Đăng nhập!';
   }
@@ -28,13 +23,10 @@ const translateError = (message) => {
   if (msg.includes('invalid email')) {
     return 'Địa chỉ email không đúng định dạng.';
   }
-
-  // Lỗi quá giới hạn yêu cầu
   if (msg.includes('rate limit')) {
     return 'Bạn thao tác quá nhanh. Vui lòng thử lại sau ít phút.';
   }
 
-  // Thông báo lỗi mặc định
   return 'Đã có lỗi xảy ra. Vui lòng kiểm tra lại thông tin!';
 };
 
@@ -46,13 +38,53 @@ export default function LoginPage() {
   const [message, setMessage] = useState(null);
   const router = useRouter();
 
+  const validateInput = () => {
+    // 1. Kiểm tra độ dài Email
+    if (email.length > 100) {
+      setMessage({ type: 'error', text: 'Email quá dài (Tối đa 100 ký tự).' });
+      return false;
+    }
+
+    // 2. Kiểm tra định dạng Email chuẩn
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!emailRegex.test(email)) {
+      setMessage({ type: 'error', text: 'Địa chỉ email không hợp lệ.' });
+      return false;
+    }
+
+    // 3. Kiểm tra Mật khẩu khi Đăng ký
+    if (isSignUp) {
+      if (password.length < 8 || password.length > 64) {
+        setMessage({ type: 'error', text: 'Mật khẩu phải từ 8 đến 64 ký tự.' });
+        return false;
+      }
+      
+      // Kiểm tra mật khẩu bắt buộc phải có ít nhất 1 chữ cái và 1 chữ số
+      const hasLetter = /[a-zA-Z]/.test(password);
+      const hasNumber = /[0-9]/.test(password);
+      if (!hasLetter || !hasNumber) {
+        setMessage({ type: 'error', text: 'Mật khẩu phải chứa ít nhất 1 chữ cái và 1 chữ số.' });
+        return false;
+      }
+    }
+
+    return true;
+  };
+
   const handleAuth = async (e) => {
     e.preventDefault();
-    setLoading(true);
     setMessage(null);
 
+    // Validate dữ liệu trước khi gửi lên Supabase
+    if (!validateInput()) return;
+
+    setLoading(true);
+
     if (isSignUp) {
-      const { data, error } = await supabase.auth.signUp({ email, password });
+      const { data, error } = await supabase.auth.signUp({ 
+        email: email.trim(), 
+        password 
+      });
       
       if (error) {
         setMessage({ type: 'error', text: translateError(error.message) });
@@ -66,7 +98,10 @@ export default function LoginPage() {
         setIsSignUp(false);
       }
     } else {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const { error } = await supabase.auth.signInWithPassword({ 
+        email: email.trim(), 
+        password 
+      });
       if (error) {
         setMessage({ type: 'error', text: translateError(error.message) });
       } else {
@@ -117,6 +152,7 @@ export default function LoginPage() {
                   <input
                     type="email"
                     required
+                    maxLength={100}
                     placeholder="name@example.com"
                     className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-4 py-3 pl-11 text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500 text-sm"
                     value={email}
@@ -134,6 +170,8 @@ export default function LoginPage() {
                   <input
                     type="password"
                     required
+                    minLength={8}
+                    maxLength={64}
                     placeholder="••••••••"
                     className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-4 py-3 pl-11 text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500 text-sm"
                     value={password}

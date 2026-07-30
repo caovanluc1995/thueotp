@@ -14,10 +14,16 @@ import {
   QrCode,
   ShieldAlert,
   AlertCircle,
-  ShieldCheck,
   ArrowRight,
   ExternalLink,
-  CheckCircle2,
+  CheckCircle2, 
+  ShieldCheck, 
+  Send, 
+  MessageCircle, 
+  MessageSquare,
+  KeyRound,
+  Lock,
+  X
 } from "lucide-react";
 
 const SHOPEE_SERVICES = [
@@ -87,11 +93,20 @@ export default function Dashboard() {
   const [depositError, setDepositError] = useState(null);
   const [depositSuccessMsg, setDepositSuccessMsg] = useState(false);
 
+  // State User Dropdown Menu & Change Password Modal
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [changePassLoading, setChangePassLoading] = useState(false);
+  const [modalMsg, setModalMsg] = useState(null);
+
   // Thông tin thanh toán payOS
   const [payosData, setPayosData] = useState(null);
   const [transactions, setTransactions] = useState([]);
 
   const previousBalanceRef = useRef(0);
+  const menuRef = useRef(null);
   const router = useRouter();
 
   const getAvailableCarriers = () => {
@@ -111,10 +126,26 @@ export default function Dashboard() {
     }
   }, [selectedService]);
 
+  // Click outside to close user dropdown menu
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setIsMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   const handleDepositChange = (val) => {
-    const num = Math.max(0, Number(val));
+    const MAX_AMOUNT = 100000000;
+    let num = Math.max(0, Number(val));
+    if (num > MAX_AMOUNT) {
+      num = MAX_AMOUNT;
+    }
+
     setDepositAmount(num);
-    setPayosData(null); // Reset mã QR cũ khi đổi số tiền
+    setPayosData(null);
     setDepositSuccessMsg(false);
 
     if (num < 10000) {
@@ -124,7 +155,6 @@ export default function Dashboard() {
     }
   };
 
-  // NẠP TIỀN QUA API PAYOS
   const handleGenerateQR = async () => {
     const num = Number(depositAmount);
     if (num < 10000) {
@@ -186,7 +216,6 @@ export default function Dashboard() {
     fetchUser();
   }, [router]);
 
-  // Polling làm mới số dư & lịch sử liên tục mỗi 3 giây ở tab Nạp tiền
   useEffect(() => {
     if (!user || activeTab !== "deposit") return;
 
@@ -208,13 +237,11 @@ export default function Dashboard() {
     if (data) {
       const newBalance = Number(data.balance || 0);
 
-      // Nếu đang hiển thị mã QR payOS VÀ số dư mới lớn hơn số dư trước đó -> Ẩn QR & báo thành công!
       if (payosData && newBalance > previousBalanceRef.current) {
         setPayosData(null);
         setDepositSuccessMsg(true);
       }
 
-      // Cập nhật ref số dư để phục vụ lần so sánh tiếp theo
       previousBalanceRef.current = newBalance;
       setProfile(data);
     } else {
@@ -234,6 +261,49 @@ export default function Dashboard() {
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     router.push("/login");
+  };
+
+  // Hàm Xử Lý Đổi Mật Khẩu qua Supabase Auth
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    setModalMsg(null);
+
+    if (newPassword.length < 8 || newPassword.length > 64) {
+      setModalMsg({ type: "error", text: "Mật khẩu phải từ 8 - 64 ký tự." });
+      return;
+    }
+
+    const hasLetter = /[a-zA-Z]/.test(newPassword);
+    const hasNumber = /[0-9]/.test(newPassword);
+    if (!hasLetter || !hasNumber) {
+      setModalMsg({ type: "error", text: "Mật khẩu phải chứa ít nhất 1 chữ cái và 1 chữ số." });
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setModalMsg({ type: "error", text: "Mật khẩu xác nhận không khớp." });
+      return;
+    }
+
+    setChangePassLoading(true);
+
+    const { error } = await supabase.auth.updateUser({
+      password: newPassword
+    });
+
+    setChangePassLoading(false);
+
+    if (error) {
+      setModalMsg({ type: "error", text: "Lỗi đổi mật khẩu: " + error.message });
+    } else {
+      setModalMsg({ type: "success", text: "Đổi mật khẩu thành công!" });
+      setNewPassword("");
+      setConfirmPassword("");
+      setTimeout(() => {
+        setShowChangePasswordModal(false);
+        setModalMsg(null);
+      }, 1500);
+    }
   };
 
   const handleRentNumber = async () => {
@@ -283,7 +353,6 @@ export default function Dashboard() {
     setLoading(false);
   };
 
-  // Polling OTP của đơn thuê đang chạy
   useEffect(() => {
     if (
       !activeOrder ||
@@ -348,18 +417,15 @@ export default function Dashboard() {
   }
 
   const currentCarriers = getAvailableCarriers();
+  const username = profile.email ? profile.email.split("@")[0] : "Người dùng";
 
-  // Hàm lấy URL hiển thị ảnh QR chuẩn
-  // Hàm tạo link QR ảnh VietQR chuẩn trực tiếp từ thông tin payOS trả về
   const getQrImageUrl = () => {
     if (!payosData) return "";
 
-    // 1. Nếu payOS trả về sẵn link ảnh mã QR
     if (payosData.qrCode && payosData.qrCode.startsWith("http")) {
       return payosData.qrCode;
     }
 
-    // 2. Tự tạo link ảnh VietQR trực tiếp siêu nhanh (sử dụng VietQR Quick Link Service)
     if (payosData.bin && payosData.accountNo) {
       const bankBin = payosData.bin;
       const accountNo = payosData.accountNo;
@@ -368,7 +434,6 @@ export default function Dashboard() {
       return `https://img.vietqr.io/image/${bankBin}-${accountNo}-compact2.png?amount=${amount}&addInfo=${addInfo}`;
     }
 
-    // 3. Dự phòng dùng API QRServer render chuỗi VietQR
     return `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(
       payosData.qrCode || payosData.checkoutUrl,
     )}`;
@@ -377,6 +442,8 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-purple-950 to-slate-900 text-slate-100 p-4 md:p-8 flex flex-col justify-between">
       <div className="max-w-5xl mx-auto space-y-6 w-full">
+        
+        {/* HEADER VỚI USER MENU MỚI */}
         <header className="bg-slate-900/80 backdrop-blur-xl border border-slate-800 p-5 rounded-2xl flex flex-col md:flex-row justify-between items-center gap-4 shadow-xl">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-orange-500 to-amber-500 flex items-center justify-center shadow-lg shadow-orange-500/20">
@@ -387,28 +454,72 @@ export default function Dashboard() {
                 THUÊ OTP SHOPEE 247
               </h1>
               <p className="text-xs text-slate-400 flex items-center gap-1">
-                <User className="w-3 h-3" /> {profile.email}
+                Hệ thống nhận OTP tự động 24/7
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-4 w-full md:w-auto justify-between">
-            <div className="bg-slate-950/60 border border-slate-800 px-4 py-2 rounded-xl text-right">
-              <span className="text-xs text-slate-400 block">
-                Số dư hiện tại
-              </span>
-              <span className="text-lg font-bold text-emerald-400 font-mono">
-                {Number(profile.balance || 0).toLocaleString()} VNĐ
-              </span>
+          {/* SỐ DƯ VÀ DROPDOWN TÀI KHOẢN */}
+          <div className="flex items-center gap-3 w-full md:w-auto justify-end">
+            {/* Khung Số dư */}
+            <div className="bg-emerald-500 text-white px-3.5 py-1.5 rounded-xl flex items-center gap-2 shadow-sm">
+              <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center font-bold text-sm">
+                $
+              </div>
+              <div className="text-left leading-tight">
+                <span className="block text-[10px] opacity-80 uppercase font-semibold">Số dư</span>
+                <span className="font-bold text-sm">{Number(profile.balance || 0).toLocaleString()} đ</span>
+              </div>
             </div>
 
-            <button
-              onClick={handleSignOut}
-              className="p-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-xl transition"
-              title="Đăng xuất"
-            >
-              <LogOut className="w-5 h-5" />
-            </button>
+            {/* User Dropdown Menu Button */}
+            <div className="relative inline-block text-left" ref={menuRef}>
+              <button
+                onClick={() => setIsMenuOpen(!isMenuOpen)}
+                className="flex items-center gap-2.5 p-1.5 pr-3 rounded-xl hover:bg-slate-800/60 transition cursor-pointer border border-transparent hover:border-slate-800"
+              >
+                <div className="w-9 h-9 rounded-full bg-orange-500 flex items-center justify-center text-white shadow-md">
+                  <User className="w-5 h-5" />
+                </div>
+                <span className="font-medium text-slate-100 text-sm hidden sm:inline-block">
+                  {username}
+                </span>
+              </button>
+
+              {/* Menu Thả Xuống (Dropdown) */}
+              {isMenuOpen && (
+                <div className="absolute right-0 mt-2 w-64 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+                  <div className="px-4 py-3 border-b border-slate-800/80">
+                    <p className="font-semibold text-slate-100 text-base truncate">{username}</p>
+                    <p className="text-xs text-slate-400 truncate mt-0.5">{profile.email}</p>
+                    <span className="inline-block mt-2 px-2.5 py-0.5 text-[11px] font-medium text-slate-300 bg-slate-800 rounded-md">
+                      Người dùng
+                    </span>
+                  </div>
+
+                  <div className="py-1">
+                    <button
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        setShowChangePasswordModal(true);
+                      }}
+                      className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800/60 transition text-left"
+                    >
+                      <KeyRound className="w-4 h-4 text-slate-400" />
+                      <span>Đổi mật khẩu</span>
+                    </button>
+
+                    <button
+                      onClick={handleSignOut}
+                      className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition text-left"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      <span>Đăng xuất</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </header>
 
@@ -630,7 +741,13 @@ export default function Dashboard() {
                       type="number"
                       step="1000"
                       min="10000"
-                      value={depositAmount}
+                      max="100000000"
+                      value={depositAmount || ""}
+                      onInput={(e) => {
+                        if (e.target.value.length > 9) {
+                          e.target.value = e.target.value.slice(0, 9);
+                        }
+                      }}
                       onKeyDown={(e) => {
                         if (
                           e.key === "-" ||
@@ -659,21 +776,23 @@ export default function Dashboard() {
                   <button
                     onClick={handleGenerateQR}
                     disabled={depositLoading}
-                    className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-emerald-600/20 transition flex items-center justify-center gap-2 text-sm disabled:opacity-50"
+                    className="w-full max-w-full overflow-hidden bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-emerald-600/20 transition flex items-center justify-center gap-2 text-sm disabled:opacity-50"
                   >
                     {depositLoading ? (
                       <>
-                        <RefreshCw className="w-5 h-5 animate-spin" />
-                        <span>Đang khởi tạo hoá đơn...</span>
+                        <RefreshCw className="w-5 h-5 animate-spin shrink-0" />
+                        <span className="truncate">
+                          Đang khởi tạo hoá đơn...
+                        </span>
                       </>
                     ) : (
                       <>
-                        <QrCode className="w-5 h-5" />
-                        <span>
+                        <QrCode className="w-5 h-5 shrink-0" />
+                        <span className="truncate">
                           Tạo mã QR nạp tiền (
                           {Number(depositAmount || 0).toLocaleString()}đ)
                         </span>
-                        <ArrowRight className="w-4 h-4" />
+                        <ArrowRight className="w-4 h-4 shrink-0" />
                       </>
                     )}
                   </button>
@@ -706,7 +825,6 @@ export default function Dashboard() {
                   </div>
                 ) : payosData && !depositError ? (
                   <div className="space-y-4 w-full flex flex-col items-center animate-fade-in">
-                    {/* Khung hiển thị Mã QR Trực Tiếp */}
                     <div className="p-3 bg-white rounded-xl shadow-xl border border-slate-700 flex flex-col items-center">
                       <img
                         src={getQrImageUrl()}
@@ -814,17 +932,136 @@ export default function Dashboard() {
         )}
       </div>
 
-      <footer className="mt-12 border-t border-slate-800/80 pt-6 pb-2 text-center text-xs text-slate-500 space-y-2">
-        <div className="flex justify-center items-center gap-6 text-slate-400 font-medium">
-          <span className="flex items-center gap-1">
-            <ShieldCheck className="w-4 h-4 text-emerald-400" /> Bảo mật 100%
-          </span>
-          <span>•</span>
-          <span>Tự động 24/7</span>
-          <span>•</span>
-          <span>Hoàn tiền tức thì nếu lỗi</span>
+      {/* MODAL ĐỔI MẬT KHẨU */}
+      {showChangePasswordModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 w-full max-w-md rounded-2xl p-6 shadow-2xl relative">
+            <button
+              onClick={() => {
+                setShowChangePasswordModal(false);
+                setModalMsg(null);
+              }}
+              className="absolute right-4 top-4 text-slate-400 hover:text-white transition"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3 mb-5">
+              <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-400">
+                <Lock className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-100">Đổi mật khẩu</h3>
+                <p className="text-xs text-slate-400">Cập nhật mật khẩu mới cho tài khoản của bạn</p>
+              </div>
+            </div>
+
+            {modalMsg && (
+              <div
+                className={`p-3 rounded-xl text-xs font-medium mb-4 flex items-center gap-2 ${
+                  modalMsg.type === "error"
+                    ? "bg-rose-500/10 border border-rose-500/20 text-rose-400"
+                    : "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400"
+                }`}
+              >
+                <ShieldCheck className="w-4 h-4 shrink-0" />
+                <span>{modalMsg.text}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleChangePassword} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-1.5">
+                  Mật khẩu mới
+                </label>
+                <input
+                  type="password"
+                  required
+                  minLength={8}
+                  maxLength={64}
+                  placeholder="••••••••"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-slate-100 text-sm focus:outline-none focus:border-blue-500 transition"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-1.5">
+                  Xác nhận mật khẩu mới
+                </label>
+                <input
+                  type="password"
+                  required
+                  minLength={8}
+                  maxLength={64}
+                  placeholder="••••••••"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-slate-100 text-sm focus:outline-none focus:border-blue-500 transition"
+                />
+              </div>
+
+              <div className="pt-2 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowChangePasswordModal(false)}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-800 text-slate-300 hover:bg-slate-800 transition text-sm font-medium"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  disabled={changePassLoading}
+                  className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {changePassLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : "Lưu thay đổi"}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
-        <p>© 2026 THUÊ OTP 247.</p>
+      )}
+
+      {/* FOOTER */}
+      <footer className="w-full max-w-5xl mx-auto my-6 px-4">
+        <div className="bg-slate-100 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800/80 rounded-2xl p-4 sm:p-6 flex flex-col md:flex-row items-center justify-between gap-4 shadow-sm">
+          <div className="flex items-center gap-4 text-center md:text-left">
+            <div className="w-12 h-12 rounded-xl bg-blue-500/10 dark:bg-blue-500/20 flex items-center justify-center shrink-0">
+              <MessageCircle className="w-6 h-6 text-blue-600 dark:text-blue-400" />
+            </div>
+            <div>
+              <h3 className="font-bold text-slate-800 dark:text-slate-100 text-base">
+                Cần hỗ trợ thêm?
+              </h3>
+              <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
+                Đội ngũ hỗ trợ sẵn sàng giúp đỡ bạn 24/7!
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 w-full md:w-auto">
+            <a
+              href="https://t.me/your_telegram_username"
+              target="_blank"
+              rel="noreferrer"
+              className="flex-1 md:flex-none inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl shadow-md transition"
+            >
+              <Send className="w-4 h-4" />
+              <span>Tham gia Telegram</span>
+            </a>
+
+            <a
+              href="https://m.me/your_facebook_page_id"
+              target="_blank"
+              rel="noreferrer"
+              className="flex-1 md:flex-none inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-sky-500 hover:bg-sky-600 text-white text-sm font-medium rounded-xl shadow-md transition"
+            >
+              <MessageSquare className="w-4 h-4" />
+              <span>Messenger</span>
+            </a>
+          </div>
+        </div>
       </footer>
     </div>
   );
