@@ -89,11 +89,10 @@ export async function POST(request) {
       return NextResponse.json({ success: true, message: "User không tồn tại" });
     }
 
-    // 4. Lưu giao dịch & cộng tiền vào ví
+    // 4. Cập nhật số dư User
     const currentBalance = Number(targetUser.balance || 0);
     const newBalance = currentBalance + amount;
 
-    // Cập nhật số dư User
     const { error: updateErr } = await supabaseAdmin
       .from('profiles')
       .update({ balance: newBalance })
@@ -104,14 +103,22 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Failed to update balance' }, { status: 500 });
     }
 
-    // Ghi log giao dịch
-    await supabaseAdmin.from('transactions').insert([{
-      user_id: targetUser.id,
-      amount: amount,
-      type: 'DEPOSIT',
-      reference_id: transactionId,
-      description: `Nạp tiền tự động payOS (+${amount.toLocaleString()}đ)`
-    }]);
+    // 5. Ghi log giao dịch vào bảng transactions (CÓ BẮT LỖI TẬN GỐC)
+    const { error: txErr } = await supabaseAdmin
+      .from('transactions')
+      .insert([{
+        user_id: targetUser.id,
+        amount: amount,
+        type: 'DEPOSIT',
+        reference_id: transactionId,
+        description: `Nạp tiền tự động payOS (+${amount.toLocaleString()}đ)`
+      }]);
+
+    if (txErr) {
+      console.error('LỖI LƯU BẢNG TRANSACTIONS:', txErr);
+    } else {
+      console.log(`Đã ghi nhận giao dịch ${transactionId} vào bảng transactions thành công.`);
+    }
 
     console.log(`Đã cộng thành công ${amount}đ cho user: ${targetUser.id}`);
     return NextResponse.json({ success: true });

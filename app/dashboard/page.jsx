@@ -206,16 +206,16 @@ export default function Dashboard() {
       .single();
 
     if (data) {
-      // Nếu phát hiện số dư tăng lên khi đang mở QR nạp tiền -> báo thành công!
-      if (
-        previousBalanceRef.current > 0 &&
-        data.balance > previousBalanceRef.current &&
-        payosData
-      ) {
+      const newBalance = Number(data.balance || 0);
+
+      // Nếu đang hiển thị mã QR payOS VÀ số dư mới lớn hơn số dư trước đó -> Ẩn QR & báo thành công!
+      if (payosData && newBalance > previousBalanceRef.current) {
         setPayosData(null);
         setDepositSuccessMsg(true);
       }
-      previousBalanceRef.current = data.balance || 0;
+
+      // Cập nhật ref số dư để phục vụ lần so sánh tiếp theo
+      previousBalanceRef.current = newBalance;
       setProfile(data);
     } else {
       setProfile({ id: userId, email: user?.email, balance: 0 });
