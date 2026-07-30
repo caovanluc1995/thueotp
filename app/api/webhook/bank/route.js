@@ -9,7 +9,7 @@ const supabaseAdmin = createClient(
 
 function verifyPayOSSignature(webhookData, checksumKey) {
   if (!webhookData || !webhookData.signature) return false;
-  
+
   const { signature, data } = webhookData;
   const sortedKeys = Object.keys(data).sort();
   const signData = sortedKeys
@@ -29,13 +29,18 @@ export async function POST(request) {
     const body = await request.json();
 
     // 1. Kiểm tra chữ ký bảo mật Webhook từ PayOS
+    // FAIL-CLOSED: nếu thiếu checksumKey trên server thì từ chối luôn,
+    // KHÔNG được âm thầm bỏ qua bước xác minh chữ ký như bản cũ.
     const checksumKey = process.env.PAYOS_CHECKSUM_KEY;
-    if (checksumKey) {
-      const isValid = verifyPayOSSignature(body, checksumKey);
-      if (!isValid) {
-        console.error('CẢNH BÁO: Request Webhook không hợp lệ!');
-        return NextResponse.json({ error: 'Invalid Signature' }, { status: 400 });
-      }
+    if (!checksumKey) {
+      console.error('CẤU HÌNH THIẾU: PAYOS_CHECKSUM_KEY chưa được set trên server!');
+      return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+    }
+
+    const isValid = verifyPayOSSignature(body, checksumKey);
+    if (!isValid) {
+      console.error('CẢNH BÁO: Request Webhook không hợp lệ!');
+      return NextResponse.json({ error: 'Invalid Signature' }, { status: 400 });
     }
 
     const data = body.data;
@@ -58,18 +63,7 @@ export async function POST(request) {
 
     const userCode = match[1].trim();
 
-    // 2. Chống cộng tiền trùng lặp
-    const { data: existingTx } = await supabaseAdmin
-      .from('transactions')
-      .select('id')
-      .eq('reference_id', transactionId)
-      .maybeSingle();
-
-    if (existingTx) {
-      return NextResponse.json({ success: true, message: "Giao dịch đã được xử lý từ trước" });
-    }
-
-    // 3. Tìm User tương ứng trong Supabase
+    // 2. Tìm User tương ứng trong Supabase
     const { data: profiles, error: profileErr } = await supabaseAdmin
       .from('profiles')
       .select('id, balance');
@@ -89,35 +83,36 @@ export async function POST(request) {
       return NextResponse.json({ success: true, message: "User không tồn tại" });
     }
 
-    // 4. Cập nhật số dư User
-    const currentBalance = Number(targetUser.balance || 0);
-    const newBalance = currentBalance + amount;
+    // 3. Ghi log giao dịch TRƯỚC, dựa vào unique constraint của DB trên reference_id
+    // để chống trùng (an toàn hơn select-rồi-insert vì không có khoảng hở giữa 2 bước).
+    // -> Nhớ chạy migration.sql để tạo unique index cho transactions.reference_id trước.
+    const { error: insertErr } = await supabaseAdmin.from('transactions').insert([{
+      user_id: targetUser.id,
+      amount: amount,
+      type: 'DEPOSIT',
+      reference_id: transactionId,
+      description: `Nạp tiền tự động payOS (+${amount.toLocaleString()}đ)`
+    }]);
 
-    const { error: updateErr } = await supabaseAdmin
-      .from('profiles')
-      .update({ balance: newBalance })
-      .eq('id', targetUser.id);
+    if (insertErr) {
+      // Vi phạm unique constraint => giao dịch này đã được xử lý trước đó, bỏ qua an toàn
+      if (insertErr.code === '23505') {
+        return NextResponse.json({ success: true, message: "Giao dịch đã được xử lý từ trước" });
+      }
+      console.error('Lỗi khi ghi log giao dịch:', insertErr);
+      return NextResponse.json({ error: 'Failed to log transaction' }, { status: 500 });
+    }
+
+    // 4. Cộng tiền NGUYÊN TỬ qua RPC (tránh lost-update khi có webhook trùng thời điểm)
+    const { error: updateErr } = await supabaseAdmin.rpc('increment_balance', {
+      p_user_id: targetUser.id,
+      p_amount: amount,
+    });
 
     if (updateErr) {
       console.error('Lỗi khi cập nhật số dư:', updateErr);
+      // Giao dịch đã được ghi log nhưng cộng tiền lỗi — cần xử lý thủ công / có cảnh báo riêng
       return NextResponse.json({ error: 'Failed to update balance' }, { status: 500 });
-    }
-
-    // 5. Ghi log giao dịch vào bảng transactions (CÓ BẮT LỖI TẬN GỐC)
-    const { error: txErr } = await supabaseAdmin
-      .from('transactions')
-      .insert([{
-        user_id: targetUser.id,
-        amount: amount,
-        type: 'DEPOSIT',
-        reference_id: transactionId,
-        description: `Nạp tiền tự động payOS (+${amount.toLocaleString()}đ)`
-      }]);
-
-    if (txErr) {
-      console.error('LỖI LƯU BẢNG TRANSACTIONS:', txErr);
-    } else {
-      console.log(`Đã ghi nhận giao dịch ${transactionId} vào bảng transactions thành công.`);
     }
 
     console.log(`Đã cộng thành công ${amount}đ cho user: ${targetUser.id}`);

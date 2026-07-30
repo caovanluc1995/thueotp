@@ -58,7 +58,7 @@ export default function LoginPage() {
         setMessage({ type: 'error', text: translateError(error.message) });
       } else {
         if (data?.user) {
-          await supabase.from('profiles').upsert([
+          await supabase.from('profiles').insert([
             { id: data.user.id, email: data.user.email, balance: 0 }
           ]);
         }
