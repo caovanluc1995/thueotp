@@ -7,7 +7,6 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// Hàm xác thực chữ ký Webhook từ payOS
 function verifyPayOSSignature(webhookData, checksumKey) {
   if (!webhookData || !webhookData.signature) return false;
   
@@ -29,12 +28,12 @@ export async function POST(request) {
   try {
     const body = await request.json();
 
-    // 1. KHIỂM TRA CHỮ KÝ BẢO MẬT PAYOS (Chống hack giả mạo)
+    // 1. Kiểm tra chữ ký bảo mật Webhook từ PayOS
     const checksumKey = process.env.PAYOS_CHECKSUM_KEY;
     if (checksumKey) {
       const isValid = verifyPayOSSignature(body, checksumKey);
       if (!isValid) {
-        console.error('CẢNH BÁO: Phát hiện Request Webhook giả mạo!');
+        console.error('CẢNH BÁO: Request Webhook không hợp lệ!');
         return NextResponse.json({ error: 'Invalid Signature' }, { status: 400 });
       }
     }
@@ -50,15 +49,16 @@ export async function POST(request) {
 
     if (amount <= 0) return NextResponse.json({ success: true });
 
-    // Trích xuất mã NAP từ nội dung chuyển khoản
+    // Trích xuất mã NAP (Ví dụ: NAP 8A1B2C3D)
     const match = memo.match(/NAP\s+([A-Z0-9]+)/);
     if (!match) {
+      console.log('Nội dung chuyển khoản không khớp cú pháp NAP:', memo);
       return NextResponse.json({ success: true, message: "Không đúng cú pháp NAP" });
     }
 
-    const userIdentifier = match[1].trim();
+    const userCode = match[1].trim();
 
-    // 2. CHỐNG CỘNG TRÙNG GIAO DỊCH (Idempotency)
+    // 2. Chống cộng tiền trùng lặp
     const { data: existingTx } = await supabaseAdmin
       .from('transactions')
       .select('id')
@@ -66,41 +66,58 @@ export async function POST(request) {
       .maybeSingle();
 
     if (existingTx) {
-      return NextResponse.json({ success: true, message: "Giao dịch đã xử lý" });
+      return NextResponse.json({ success: true, message: "Giao dịch đã được xử lý từ trước" });
     }
 
-    // 3. TÌM TÀI KHOẢN KHÁCH HÀNG
-    const { data: profiles } = await supabaseAdmin.from('profiles').select('id, email');
-    const targetUser = profiles?.find((p) => {
-      const prefixEmail = p.email ? p.email.split('@')[0].toUpperCase() : '';
-      const prefixId = p.id ? p.id.substring(0, 6).toUpperCase() : '';
-      return prefixEmail === userIdentifier || prefixId === userIdentifier;
+    // 3. Tìm User tương ứng trong Supabase
+    const { data: profiles, error: profileErr } = await supabaseAdmin
+      .from('profiles')
+      .select('id, balance');
+
+    if (profileErr || !profiles) {
+      console.error('Lỗi truy vấn bảng profiles:', profileErr);
+      return NextResponse.json({ error: 'Database Error' }, { status: 500 });
+    }
+
+    const targetUser = profiles.find((p) => {
+      const cleanId = String(p.id).replace(/[^a-zA-Z0-9]/g, '').substring(0, 8).toUpperCase();
+      return cleanId === userCode;
     });
 
     if (!targetUser) {
-      return NextResponse.json({ success: true, message: "Không tìm thấy user tương ứng" });
+      console.error(`Không tìm thấy user với mã: ${userCode}`);
+      return NextResponse.json({ success: true, message: "User không tồn tại" });
     }
 
-    // 4. LƯU GIAO DỊCH TRƯỚC VÀ CỘNG TIỀN ATOMIC (Chống race condition)
-    const { error: txErr } = await supabaseAdmin.from('transactions').insert([{
+    // 4. Lưu giao dịch & cộng tiền vào ví
+    const currentBalance = Number(targetUser.balance || 0);
+    const newBalance = currentBalance + amount;
+
+    // Cập nhật số dư User
+    const { error: updateErr } = await supabaseAdmin
+      .from('profiles')
+      .update({ balance: newBalance })
+      .eq('id', targetUser.id);
+
+    if (updateErr) {
+      console.error('Lỗi khi cập nhật số dư:', updateErr);
+      return NextResponse.json({ error: 'Failed to update balance' }, { status: 500 });
+    }
+
+    // Ghi log giao dịch
+    await supabaseAdmin.from('transactions').insert([{
       user_id: targetUser.id,
       amount: amount,
       type: 'DEPOSIT',
       reference_id: transactionId,
-      description: `Nạp tiền tự động (+${amount.toLocaleString()}đ) - CK: ${memo}`
+      description: `Nạp tiền tự động payOS (+${amount.toLocaleString()}đ)`
     }]);
 
-    if (!txErr) {
-      // Gọi RPC hoặc cập nhật an toàn
-      await supabaseAdmin.rpc('increment_balance', { 
-        user_id_input: targetUser.id, 
-        amount_input: amount 
-      });
-    }
-
+    console.log(`Đã cộng thành công ${amount}đ cho user: ${targetUser.id}`);
     return NextResponse.json({ success: true });
+
   } catch (err) {
-    console.error('Lỗi xử lý Webhook:', err);
-    return NextResponse.json({ error: 'Internal Error' }, { status: 500 });
+    console.error('Lỗi hệ thống Webhook:', err);
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

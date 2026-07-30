@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 
-// Hàm tự tính signature chuẩn REST API của PayOS
 function createPaymentSignature(data, checksumKey) {
   const sortedDataKeys = Object.keys(data).sort();
   const dataQueryStr = sortedDataKeys
@@ -38,18 +37,17 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Thiếu thông tin tài khoản' }, { status: 400 });
     }
 
-    // Domain động
     const host = request.headers.get('host') || 'thueotp7.vercel.app';
     const protocol = host.includes('localhost') ? 'http' : 'https';
     const origin = `${protocol}://${host}`;
 
-    // Chuẩn hóa mô tả & orderCode
-    const rawIdentifier = userEmail ? userEmail.split('@')[0] : userId;
-    const cleanIdentifier = String(rawIdentifier).replace(/[^a-zA-Z0-9]/g, '').substring(0, 10).toUpperCase();
-    const description = `NAP ${cleanIdentifier}`.substring(0, 25);
+    // Lấy 8 ký tự đầu của User ID (viết hoa, xóa ký tự đặc biệt) làm mã nạp cố định
+    const cleanUserId = String(userId).replace(/[^a-zA-Z0-9]/g, '').substring(0, 8).toUpperCase();
+    
+    // Nội dung chuyển khoản chuẩn: NAP <8_KY_TU_USER_ID>
+    const description = `NAP ${cleanUserId}`;
     const orderCode = Number(String(Date.now()).slice(-6) + Math.floor(100 + Math.random() * 900));
 
-    // 1. Chuẩn bị dữ liệu gửi PayOS
     const paymentData = {
       amount: Number(amount),
       cancelUrl: `${origin}/dashboard`,
@@ -58,10 +56,8 @@ export async function POST(request) {
       returnUrl: `${origin}/dashboard`,
     };
 
-    // 2. Tự tính toán Signature SHA256
     const signature = createPaymentSignature(paymentData, checksumKey);
 
-    // 3. Gọi trực tiếp API REST của PayOS qua fetch (Bỏ qua SDK @payos/node hoàn toàn)
     const payosResponse = await fetch('https://api-merchant.payos.vn/v2/payment-requests', {
       method: 'POST',
       headers: {
@@ -85,11 +81,15 @@ export async function POST(request) {
       );
     }
 
-    // 4. Trả kết quả cho Frontend
     return NextResponse.json({
       ok: true,
       checkoutUrl: resData.data.checkoutUrl,
       qrCode: resData.data.qrCode,
+      accountNo: resData.data.accountNo,
+      accountName: resData.data.accountName,
+      bin: resData.data.bin,
+      description: description,
+      amount: amount
     });
 
   } catch (error) {

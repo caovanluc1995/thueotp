@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import {
@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   ArrowRight,
   ExternalLink,
+  CheckCircle2,
 } from "lucide-react";
 
 const SHOPEE_SERVICES = [
@@ -84,11 +85,13 @@ export default function Dashboard() {
 
   const [depositAmount, setDepositAmount] = useState(20000);
   const [depositError, setDepositError] = useState(null);
+  const [depositSuccessMsg, setDepositSuccessMsg] = useState(false);
 
   // Thông tin thanh toán payOS
   const [payosData, setPayosData] = useState(null);
   const [transactions, setTransactions] = useState([]);
 
+  const previousBalanceRef = useRef(0);
   const router = useRouter();
 
   const getAvailableCarriers = () => {
@@ -112,6 +115,7 @@ export default function Dashboard() {
     const num = Math.max(0, Number(val));
     setDepositAmount(num);
     setPayosData(null); // Reset mã QR cũ khi đổi số tiền
+    setDepositSuccessMsg(false);
 
     if (num < 10000) {
       setDepositError("Số tiền nạp tối thiểu là 10.000 VNĐ");
@@ -120,7 +124,7 @@ export default function Dashboard() {
     }
   };
 
-  // NẠP TIỀN QUA API PAYOS (ĐÃ SỬA AN TOÀN)
+  // NẠP TIỀN QUA API PAYOS
   const handleGenerateQR = async () => {
     const num = Number(depositAmount);
     if (num < 10000) {
@@ -129,7 +133,6 @@ export default function Dashboard() {
       return;
     }
 
-    // Lấy ID và Email an toàn từ profile hoặc user
     const currentUserId = profile?.id || user?.id;
     const currentUserEmail = profile?.email || user?.email;
 
@@ -141,6 +144,7 @@ export default function Dashboard() {
     }
 
     setDepositError(null);
+    setDepositSuccessMsg(false);
     setDepositLoading(true);
 
     try {
@@ -200,8 +204,22 @@ export default function Dashboard() {
       .select("*")
       .eq("id", userId)
       .single();
-    if (data) setProfile(data);
-    else setProfile({ id: userId, email: user?.email, balance: 0 });
+
+    if (data) {
+      // Nếu phát hiện số dư tăng lên khi đang mở QR nạp tiền -> báo thành công!
+      if (
+        previousBalanceRef.current > 0 &&
+        data.balance > previousBalanceRef.current &&
+        payosData
+      ) {
+        setPayosData(null);
+        setDepositSuccessMsg(true);
+      }
+      previousBalanceRef.current = data.balance || 0;
+      setProfile(data);
+    } else {
+      setProfile({ id: userId, email: user?.email, balance: 0 });
+    }
   };
 
   const fetchHistory = async (userId) => {
@@ -265,6 +283,7 @@ export default function Dashboard() {
     setLoading(false);
   };
 
+  // Polling OTP của đơn thuê đang chạy
   useEffect(() => {
     if (
       !activeOrder ||
@@ -329,6 +348,31 @@ export default function Dashboard() {
   }
 
   const currentCarriers = getAvailableCarriers();
+
+  // Hàm lấy URL hiển thị ảnh QR chuẩn
+  // Hàm tạo link QR ảnh VietQR chuẩn trực tiếp từ thông tin payOS trả về
+  const getQrImageUrl = () => {
+    if (!payosData) return "";
+
+    // 1. Nếu payOS trả về sẵn link ảnh mã QR
+    if (payosData.qrCode && payosData.qrCode.startsWith("http")) {
+      return payosData.qrCode;
+    }
+
+    // 2. Tự tạo link ảnh VietQR trực tiếp siêu nhanh (sử dụng VietQR Quick Link Service)
+    if (payosData.bin && payosData.accountNo) {
+      const bankBin = payosData.bin;
+      const accountNo = payosData.accountNo;
+      const amount = payosData.amount || depositAmount;
+      const addInfo = encodeURIComponent(payosData.description || "");
+      return `https://img.vietqr.io/image/${bankBin}-${accountNo}-compact2.png?amount=${amount}&addInfo=${addInfo}`;
+    }
+
+    // 3. Dự phòng dùng API QRServer render chuỗi VietQR
+    return `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(
+      payosData.qrCode || payosData.checkoutUrl,
+    )}`;
+  };
 
   return (
     <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-purple-950 to-slate-900 text-slate-100 p-4 md:p-8 flex flex-col justify-between">
@@ -648,41 +692,62 @@ export default function Dashboard() {
               </div>
 
               <div className="flex flex-col items-center justify-center p-6 bg-slate-950 border border-slate-800 rounded-2xl text-center min-h-[320px]">
-                {payosData && !depositError ? (
+                {depositSuccessMsg ? (
+                  <div className="flex flex-col items-center justify-center space-y-3 p-4 animate-fade-in">
+                    <div className="w-16 h-16 rounded-full bg-emerald-500/20 border border-emerald-500 flex items-center justify-center text-emerald-400">
+                      <CheckCircle2 className="w-10 h-10 animate-bounce" />
+                    </div>
+                    <h3 className="text-lg font-bold text-emerald-400">
+                      Nạp tiền thành công!
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Số dư của bạn đã được cập nhật tự động vào hệ thống.
+                    </p>
+                  </div>
+                ) : payosData && !depositError ? (
                   <div className="space-y-4 w-full flex flex-col items-center animate-fade-in">
-                    <div className="p-3 bg-white rounded-xl shadow-lg relative">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                    {/* Khung hiển thị Mã QR Trực Tiếp */}
+                    <div className="p-3 bg-white rounded-xl shadow-xl border border-slate-700 flex flex-col items-center">
                       <img
-                        src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(payosData.qrCode || payosData.checkoutUrl)}`}
-                        alt="payOS QR Code"
-                        className="w-48 h-48 object-contain"
+                        src={getQrImageUrl()}
+                        alt="Mã QR Thanh Toán"
+                        className="w-56 h-56 object-contain rounded-lg"
                       />
+                      <p className="text-[11px] text-slate-600 font-medium mt-2">
+                        Mở App Ngân hàng bất kỳ để quét mã
+                      </p>
+                    </div>
+
+                    <div className="w-full space-y-2 text-sm max-w-xs">
+                      <div className="flex justify-between items-center bg-slate-900 p-2.5 rounded-lg border border-slate-800">
+                        <span className="text-slate-400 text-xs">
+                          Nội dung CK:
+                        </span>
+                        <span className="font-mono font-bold text-amber-400">
+                          {payosData.description}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center bg-slate-900 p-2.5 rounded-lg border border-slate-800">
+                        <span className="text-slate-400 text-xs">Số tiền:</span>
+                        <span className="font-mono font-bold text-emerald-400">
+                          {Number(depositAmount).toLocaleString()} VNĐ
+                        </span>
+                      </div>
                     </div>
 
                     <a
                       href={payosData.checkoutUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center gap-2 text-xs font-semibold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-3 py-1.5 rounded-lg hover:bg-emerald-900/50 transition"
+                      className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-emerald-400 transition underline pt-1"
                     >
-                      <ExternalLink className="w-3.5 h-3.5" /> Thanh toán qua
-                      cổng payOS
+                      <ExternalLink className="w-3.5 h-3.5" /> Hoặc mở cổng
+                      PayOS trên tab mới
                     </a>
 
-                    <div className="w-full space-y-2 text-sm">
-                      <div className="flex justify-between items-center bg-slate-900 p-2.5 rounded-lg border border-slate-800">
-                        <span className="text-slate-400 text-xs">
-                          Số tiền nạp:
-                        </span>
-                        <span className="font-mono font-bold text-slate-200">
-                          {Number(depositAmount).toLocaleString()} VNĐ
-                        </span>
-                      </div>
-                    </div>
-
-                    <p className="text-xs text-emerald-400 flex items-center gap-1 animate-pulse font-medium pt-1">
+                    <p className="text-xs text-emerald-400 flex items-center gap-1 animate-pulse font-medium">
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Đang
-                      đợi ngân hàng xác nhận giao dịch...
+                      chờ hệ thống ghi nhận tiền nạp...
                     </p>
                   </div>
                 ) : (
