@@ -444,9 +444,9 @@ export default function Dashboard() {
       <div className="max-w-5xl mx-auto space-y-6 w-full">
         
         {/* HEADER VỚI USER MENU MỚI */}
-        <header className="bg-slate-900/80 backdrop-blur-xl border border-slate-800 p-5 rounded-2xl flex flex-col md:flex-row justify-between items-center gap-4 shadow-xl">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-orange-500 to-amber-500 flex items-center justify-center shadow-lg shadow-orange-500/20">
+        <header className="bg-slate-900/80 backdrop-blur-xl border border-slate-800 p-4 sm:p-5 rounded-2xl flex flex-col md:flex-row justify-between items-center gap-4 shadow-xl">
+          <div className="flex items-center gap-3 w-full md:w-auto">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-orange-500 to-amber-500 flex items-center justify-center shadow-lg shadow-orange-500/20 shrink-0">
               <Phone className="w-6 h-6 text-white" />
             </div>
             <div>
@@ -460,9 +460,9 @@ export default function Dashboard() {
           </div>
 
           {/* SỐ DƯ VÀ DROPDOWN TÀI KHOẢN */}
-          <div className="flex items-center gap-3 w-full md:w-auto justify-end">
+          <div className="flex items-center gap-3 w-full md:w-auto justify-end max-w-full min-w-0">
             {/* Khung Số dư */}
-            <div className="bg-emerald-500 text-white px-3.5 py-1.5 rounded-xl flex items-center gap-2 shadow-sm">
+            <div className="bg-emerald-500 text-white px-3.5 py-1.5 rounded-xl flex items-center gap-2 shadow-sm shrink-0">
               <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center font-bold text-sm">
                 $
               </div>
@@ -473,25 +473,25 @@ export default function Dashboard() {
             </div>
 
             {/* User Dropdown Menu Button */}
-            <div className="relative inline-block text-left" ref={menuRef}>
+            <div className="relative inline-block text-left min-w-0 shrink" ref={menuRef}>
               <button
                 onClick={() => setIsMenuOpen(!isMenuOpen)}
-                className="flex items-center gap-2.5 p-1.5 pr-3 rounded-xl hover:bg-slate-800/60 transition cursor-pointer border border-transparent hover:border-slate-800"
+                className="flex items-center gap-2.5 p-1.5 pr-3 rounded-xl hover:bg-slate-800/60 transition cursor-pointer border border-transparent hover:border-slate-800 max-w-full"
               >
-                <div className="w-9 h-9 rounded-full bg-orange-500 flex items-center justify-center text-white shadow-md">
+                <div className="w-9 h-9 rounded-full bg-orange-500 flex items-center justify-center text-white shadow-md shrink-0">
                   <User className="w-5 h-5" />
                 </div>
-                <span className="font-medium text-slate-100 text-sm hidden sm:inline-block">
+                <span className="font-medium text-slate-100 text-sm hidden sm:inline-block truncate max-w-[120px] sm:max-w-[150px]">
                   {username}
                 </span>
               </button>
 
-              {/* Menu Thả Xuống (Dropdown) */}
+              {/* Menu Thả Xuống (Dropdown) - Sửa giớ hạn tràn text và vị trí */}
               {isMenuOpen && (
-                <div className="absolute right-0 mt-2 w-64 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
-                  <div className="px-4 py-3 border-b border-slate-800/80">
-                    <p className="font-semibold text-slate-100 text-base truncate">{username}</p>
-                    <p className="text-xs text-slate-400 truncate mt-0.5">{profile.email}</p>
+                <div className="absolute right-0 mt-2 w-64 max-w-[calc(100vw-32px)] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150 overflow-hidden">
+                  <div className="px-4 py-3 border-b border-slate-800/80 overflow-hidden">
+                    <p className="font-semibold text-slate-100 text-base truncate" title={username}>{username}</p>
+                    <p className="text-xs text-slate-400 truncate mt-0.5" title={profile.email}>{profile.email}</p>
                     <span className="inline-block mt-2 px-2.5 py-0.5 text-[11px] font-medium text-slate-300 bg-slate-800 rounded-md">
                       Người dùng
                     </span>
@@ -505,7 +505,7 @@ export default function Dashboard() {
                       }}
                       className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800/60 transition text-left"
                     >
-                      <KeyRound className="w-4 h-4 text-slate-400" />
+                      <KeyRound className="w-4 h-4 text-slate-400 shrink-0" />
                       <span>Đổi mật khẩu</span>
                     </button>
 
@@ -513,7 +513,7 @@ export default function Dashboard() {
                       onClick={handleSignOut}
                       className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition text-left"
                     >
-                      <LogOut className="w-4 h-4" />
+                      <LogOut className="w-4 h-4 shrink-0" />
                       <span>Đăng xuất</span>
                     </button>
                   </div>
