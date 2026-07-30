@@ -24,9 +24,6 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// Xác thực người gọi bằng access token thay vì tin userId do client tự gửi lên.
-// Client (dashboard) cần gửi header: Authorization: Bearer <access_token>
-// (access_token lấy từ supabase.auth.getSession() ở phía client).
 async function getAuthenticatedUser(request) {
   const authHeader = request.headers.get('authorization') || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
@@ -45,12 +42,11 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Chưa cấu hình API Key dịch vụ' }, { status: 500 });
     }
 
-    // 0. Bắt buộc xác thực trước khi làm bất cứ điều gì
     const authUser = await getAuthenticatedUser(request);
     if (!authUser) {
       return NextResponse.json({ error: 'Vui lòng đăng nhập lại' }, { status: 401 });
     }
-    const userId = authUser.id; // KHÔNG dùng userId từ body nữa
+    const userId = authUser.id;
 
     const body = await request.json();
     const { action, serviceCode, carrier, sessionId } = body;
@@ -62,20 +58,13 @@ export async function POST(request) {
 
     // 1. THUÊ SỐ MỚI
     if (action === 'START') {
-      if (!serviceCode) {
-        return NextResponse.json({ error: 'Thiếu thông tin yêu cầu' }, { status: 400 });
-      }
-
-      // Whitelist chặt: không cho serviceCode lạ lọt qua với giá mặc định
-      if (!(serviceCode in SERVICE_PRICES)) {
+      if (!serviceCode || !(serviceCode in SERVICE_PRICES)) {
         return NextResponse.json({ error: 'Dịch vụ không hợp lệ' }, { status: 400 });
       }
 
       const price = SERVICE_PRICES[serviceCode];
       const realOtisServiceCode = SERVICE_MAP[serviceCode];
 
-      // Trừ tiền NGUYÊN TỬ qua RPC — DB tự kiểm tra đủ số dư,
-      // tránh race condition khi bấm 2 lần / 2 request đồng thời.
       let newBalance;
       try {
         const { data, error } = await supabaseAdmin.rpc('rent_deduct_balance', {
@@ -88,34 +77,27 @@ export async function POST(request) {
         if (String(err.message || '').includes('INSUFFICIENT_BALANCE')) {
           return NextResponse.json({ error: 'Số dư tài khoản không đủ!' }, { status: 400 });
         }
-        console.error('Lỗi trừ tiền:', err);
         return NextResponse.json({ error: 'Lỗi hệ thống, vui lòng thử lại' }, { status: 500 });
       }
 
-      // Gọi API Otis
       let otisRes;
       try {
         otisRes = await axios.post(
           `${OTIS_URL}/api/phone-rental/start`,
           { service: realOtisServiceCode, carrier: carrier || 'random' },
-          { headers }
+          { headers, timeout: 10000 }
         );
       } catch (err) {
-        // Hoàn tiền ngay vì chưa lấy được số
         await supabaseAdmin.rpc('increment_balance', { p_user_id: userId, p_amount: price });
-        return NextResponse.json({
-          error: 'Hệ thống hết số hoặc đang bảo trì, thử lại sau!'
-        }, { status: 400 });
+        return NextResponse.json({ error: 'Hệ thống hết số hoặc đang bảo trì, thử lại sau!' }, { status: 400 });
       }
 
       const { sessionId: otisSessionId, phoneNumber } = otisRes.data || {};
       if (!otisSessionId || !phoneNumber) {
-        // Hoàn tiền vì không lấy được số hợp lệ
         await supabaseAdmin.rpc('increment_balance', { p_user_id: userId, p_amount: price });
         return NextResponse.json({ error: 'Không thể lấy số từ nhà mạng lúc này' }, { status: 400 });
       }
 
-      // Lưu đơn
       const { data: orderData } = await supabaseAdmin.from('orders').insert([{
         user_id: userId,
         service_name: serviceCode,
@@ -143,7 +125,7 @@ export async function POST(request) {
       });
     }
 
-    // 2. NHẬN OTP VÀ HOÀN TIỀN TỰ ĐỘNG
+    // 2. NHẬN OTP VÀ HOÀN TIỀN
     if (action === 'GET_OTP') {
       if (!sessionId) {
         return NextResponse.json({ error: 'Thiếu thông tin tra cứu' }, { status: 400 });
@@ -152,40 +134,26 @@ export async function POST(request) {
       try {
         const response = await axios.get(
           `${OTIS_URL}/api/phone-rental/get-otp?sessionId=${encodeURIComponent(sessionId)}`,
-          { headers }
+          { headers, timeout: 8000 }
         );
 
         const data = response.data;
 
         if (data.status === 'expired' || data.status === 'error') {
-          // Khóa đơn bằng update có điều kiện — CHỈ đơn của chính user này mới được xử lý.
-          // (trước đây thiếu .eq('user_id', userId) nên ai biết sessionId cũng hoàn được tiền
-          //  về ví của chính họ thay vì chủ đơn thật)
-          const { data: updatedOrders } = await supabaseAdmin
-            .from('orders')
-            .update({ status: 'EXPIRED' })
-            .eq('session_id', sessionId)
-            .eq('user_id', userId)
-            .eq('status', 'PENDING')
-            .select();
+          // Gọi RPC an toàn chống race condition
+          const { data: refundResult, error: refundErr } = await supabaseAdmin.rpc(
+            'process_order_refund',
+            { p_session_id: sessionId, p_user_id: userId }
+          );
 
-          if (updatedOrders && updatedOrders.length > 0) {
-            const order = updatedOrders[0];
-            const refundAmount = Number(order.price);
-
-            const { data: refundedBalance, error: refundErr } = await supabaseAdmin.rpc(
-              'increment_balance',
-              { p_user_id: userId, p_amount: refundAmount }
-            );
-
-            if (!refundErr) {
-              await supabaseAdmin.from('transactions').insert([{
-                user_id: userId,
-                amount: refundAmount,
-                type: 'REFUND',
-                description: `Hoàn tiền thuê số ${order.phone_number} (Không nhận được OTP)`
-              }]);
-            }
+          if (!refundErr && refundResult && refundResult[0]?.refunded) {
+            const refundedAmount = refundResult[0].refund_amount;
+            await supabaseAdmin.from('transactions').insert([{
+              user_id: userId,
+              amount: refundedAmount,
+              type: 'REFUND',
+              description: `Hoàn tiền đơn thuê hết hạn (${sessionId})`
+            }]);
           }
         }
 

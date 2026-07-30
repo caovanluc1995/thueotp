@@ -34,6 +34,7 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
     }
 
+    // 1. Xác thực chữ ký Webhook
     const isValid = verifyPayOSSignature(body, checksumKey);
     if (!isValid) {
       console.error('CẢNH BÁO: Request Webhook không hợp lệ!');
@@ -51,10 +52,10 @@ export async function POST(request) {
 
     if (amount <= 0) return NextResponse.json({ success: true });
 
+    // 2. Bắt cú pháp NAP
     const match = memo.match(/NAP\s+([A-Z0-9]+)/);
     if (!match) {
       console.log('Nội dung chuyển khoản không khớp cú pháp NAP:', memo);
-      // Vẫn ghi lại để không mất dấu vết, admin có thể đối chiếu tay
       await supabaseAdmin.from('unmatched_deposits').insert([{
         reference_id: transactionId,
         amount,
@@ -66,35 +67,28 @@ export async function POST(request) {
 
     const userCode = match[1].trim();
 
-    const { data: profiles, error: profileErr } = await supabaseAdmin
+    // 3. Tìm chính xác User thông qua DB Query trực tiếp (Tránh kéo全 bộ profiles về RAM)
+    // Giả định User ID dạng UUID, kiểm tra chính xác 8 ký tự đầu trực tiếp trong Postgres SQL
+    const { data: matchedUsers, error: profileErr } = await supabaseAdmin
       .from('profiles')
-      .select('id, balance');
+      .select('id')
+      .ilike('id', `${userCode}%`)
+      .limit(1);
 
-    if (profileErr || !profiles) {
-      console.error('Lỗi truy vấn bảng profiles:', profileErr);
-      return NextResponse.json({ error: 'Database Error' }, { status: 500 });
-    }
-
-    const targetUser = profiles.find((p) => {
-      const cleanId = String(p.id).replace(/[^a-zA-Z0-9]/g, '').substring(0, 8).toUpperCase();
-      return cleanId === userCode;
-    });
+    const targetUser = matchedUsers && matchedUsers.length > 0 ? matchedUsers[0] : null;
 
     if (!targetUser) {
       console.error(`Không tìm thấy user với mã: ${userCode}`);
-      // QUAN TRỌNG: không được im lặng bỏ qua — ghi lại để admin đối chiếu và cộng tay,
-      // vì trả success:true khiến PayOS coi là đã xử lý xong và KHÔNG gửi lại webhook nữa.
-      const { error: logErr } = await supabaseAdmin.from('unmatched_deposits').insert([{
+      await supabaseAdmin.from('unmatched_deposits').insert([{
         reference_id: transactionId,
         amount,
         memo,
         raw_payload: body,
       }]);
-      if (logErr) console.error('Lỗi khi ghi log unmatched_deposits:', logErr);
-
       return NextResponse.json({ success: true, message: "User không tồn tại - đã lưu để đối chiếu" });
     }
 
+    // 4. Ghi log giao dịch - Bắt buộc dùng Unique Key reference_id để chống nạp trùng
     const { error: insertErr } = await supabaseAdmin.from('transactions').insert([{
       user_id: targetUser.id,
       amount: amount,
@@ -104,13 +98,14 @@ export async function POST(request) {
     }]);
 
     if (insertErr) {
-      if (insertErr.code === '23505') {
+      if (insertErr.code === '23505') { // Postgres code 23505: Unique constraint violation
         return NextResponse.json({ success: true, message: "Giao dịch đã được xử lý từ trước" });
       }
       console.error('Lỗi khi ghi log giao dịch:', insertErr);
       return NextResponse.json({ error: 'Failed to log transaction' }, { status: 500 });
     }
 
+    // 5. Cộng số dư tài khoản
     const { error: updateErr } = await supabaseAdmin.rpc('increment_balance', {
       p_user_id: targetUser.id,
       p_amount: amount,

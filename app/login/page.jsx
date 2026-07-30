@@ -216,7 +216,7 @@ export default function LoginPage() {
       </div>
 
       <footer className="py-4 text-center text-xs text-slate-500 border-t border-slate-800/50">
-        <p>© 2026 THUÊ OTP 247. Bảo mật & Nhanh chóng.</p>
+        <p>© 2026 THUÊ OTP 247</p>
       </footer>
     </div>
   );
